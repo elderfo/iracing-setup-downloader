@@ -341,7 +341,7 @@ class SetupDownloader:
                         msg = f"Extracted file does not exist: {file_path}"
                         raise FileNotFoundError(msg)
 
-                # Mark as downloaded in state (store first file path for reference)
+                # Mark as downloaded in state with all extracted file paths
                 self._state.mark_downloaded(
                     self._provider.name,
                     setup.id,
