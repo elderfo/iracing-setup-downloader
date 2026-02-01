@@ -31,7 +31,7 @@ class MockProvider(SetupProvider):
         """Fetch setups."""
         return self._setups
 
-    async def download_setup(self, setup: SetupRecord, output_path: Path) -> Path:
+    async def download_setup(self, setup: SetupRecord, output_path: Path) -> list[Path]:
         """Download a setup."""
         if self._download_delay > 0:
             await asyncio.sleep(self._download_delay)
@@ -41,12 +41,12 @@ class MockProvider(SetupProvider):
             msg = "Mock download failure"
             raise Exception(msg)
 
-        # Create the file
-        output_dir = output_path / setup.get_output_directory()
-        file_path = output_dir / setup.get_output_filename()
+        # Create the file using car/track from setup
+        output_dir = output_path / setup.car / setup.track
+        file_path = output_dir / f"setup_{setup.id}.sto"
         output_dir.mkdir(parents=True, exist_ok=True)
         file_path.write_text("mock setup content")
-        return file_path
+        return [file_path]
 
     def get_auth_headers(self) -> dict[str, str]:
         """Return auth headers."""
@@ -217,9 +217,7 @@ class TestSetupDownloader:
 
         # Verify files were created
         for setup in sample_setups:
-            file_path = (
-                tmp_path / setup.get_output_directory() / setup.get_output_filename()
-            )
+            file_path = tmp_path / setup.car / setup.track / f"setup_{setup.id}.sto"
             assert file_path.exists()
             assert file_path.read_text() == "mock setup content"
 
@@ -276,9 +274,7 @@ class TestSetupDownloader:
 
         # Verify no files were created
         for setup in sample_setups:
-            file_path = (
-                tmp_path / setup.get_output_directory() / setup.get_output_filename()
-            )
+            file_path = tmp_path / setup.car / setup.track / f"setup_{setup.id}.sto"
             assert not file_path.exists()
 
     async def test_download_all_unloaded_state(self, tmp_path: Path):
@@ -305,14 +301,15 @@ class TestSetupDownloader:
         # Verify file was created
         file_path = (
             tmp_path
-            / sample_setup.get_output_directory()
-            / sample_setup.get_output_filename()
+            / sample_setup.car
+            / sample_setup.track
+            / f"setup_{sample_setup.id}.sto"
         )
         assert file_path.exists()
 
         # Verify state was updated
         assert mock_state.is_downloaded(
-            provider.name, sample_setup.id, sample_setup.updated_date, file_path
+            provider.name, sample_setup.id, sample_setup.updated_date
         )
 
     async def test_download_one_with_retry(
@@ -416,13 +413,11 @@ class TestSetupDownloader:
 
         # Download first 2 setups
         for setup in sample_setups[:2]:
-            file_path = (
-                tmp_path / setup.get_output_directory() / setup.get_output_filename()
-            )
+            file_path = tmp_path / setup.car / setup.track / f"setup_{setup.id}.sto"
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text("content")
             mock_state.mark_downloaded(
-                provider.name, setup.id, setup.updated_date, file_path
+                provider.name, setup.id, setup.updated_date, [file_path]
             )
 
         # Filter should return only last 3
@@ -496,22 +491,16 @@ class TestSetupDownloader:
         provider = MockProvider()
         downloader = SetupDownloader(provider=provider, state=mock_state)
 
-        file_path = (
-            tmp_path
-            / sample_setup.get_output_directory()
-            / sample_setup.get_output_filename()
-        )
-
         # Initially not downloaded
         assert not mock_state.is_downloaded(
-            provider.name, sample_setup.id, sample_setup.updated_date, file_path
+            provider.name, sample_setup.id, sample_setup.updated_date
         )
 
         await downloader.download_one(sample_setup, tmp_path)
 
         # Should be marked as downloaded
         assert mock_state.is_downloaded(
-            provider.name, sample_setup.id, sample_setup.updated_date, file_path
+            provider.name, sample_setup.id, sample_setup.updated_date
         )
 
     async def test_state_not_updated_on_failure(
@@ -524,17 +513,11 @@ class TestSetupDownloader:
 
         downloader = SetupDownloader(provider=provider, state=mock_state, max_retries=1)
 
-        file_path = (
-            tmp_path
-            / sample_setup.get_output_directory()
-            / sample_setup.get_output_filename()
-        )
-
         await downloader.download_one(sample_setup, tmp_path)
 
         # Should not be marked as downloaded
         assert not mock_state.is_downloaded(
-            provider.name, sample_setup.id, sample_setup.updated_date, file_path
+            provider.name, sample_setup.id, sample_setup.updated_date
         )
 
     async def test_download_all_provider_error(

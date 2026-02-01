@@ -40,22 +40,22 @@ class SetupProvider(ABC):
         ...
 
     @abstractmethod
-    async def download_setup(self, setup: SetupRecord, output_path: Path) -> Path:
-        """Download a single setup file.
+    async def download_setup(self, setup: SetupRecord, output_path: Path) -> list[Path]:
+        """Download and extract setup files.
 
-        Downloads the setup file from the provider and saves it to the
-        specified output path.
+        Downloads the setup package from the provider and extracts it to the
+        specified output path. The package may contain multiple .sto files.
 
         Args:
             setup: The SetupRecord to download
-            output_path: Directory path where the setup file should be saved
+            output_path: Directory path where setup files should be extracted
 
         Returns:
-            Path object pointing to the saved setup file
+            List of Path objects pointing to the extracted .sto files
 
         Raises:
             aiohttp.ClientError: If the download request fails
-            IOError: If writing the file fails
+            IOError: If extraction or writing fails
             ValueError: If the setup URL is invalid
         """
         ...

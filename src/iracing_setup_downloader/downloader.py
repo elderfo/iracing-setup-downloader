@@ -189,13 +189,15 @@ class SetupDownloader:
             raise
 
     def _filter_new_setups(
-        self, setups: list[SetupRecord], output_path: Path
+        self,
+        setups: list[SetupRecord],
+        output_path: Path,  # noqa: ARG002
     ) -> list[SetupRecord]:
         """Filter out setups that have already been downloaded.
 
         Args:
             setups: List of all available setups
-            output_path: Base output directory
+            output_path: Base output directory (unused, kept for interface consistency)
 
         Returns:
             List of setups that need to be downloaded
@@ -203,13 +205,9 @@ class SetupDownloader:
         new_setups: list[SetupRecord] = []
 
         for setup in setups:
-            # Construct expected file path
-            output_dir = output_path / setup.get_output_directory()
-            file_path = output_dir / setup.get_output_filename()
-
-            # Check if already downloaded
+            # Check if already downloaded by ID and updated_date
             if not self._state.is_downloaded(
-                self._provider.name, setup.id, setup.updated_date, file_path
+                self._provider.name, setup.id, setup.updated_date
             ):
                 new_setups.append(setup)
             else:
@@ -309,49 +307,52 @@ class SetupDownloader:
     async def download_one(self, setup: SetupRecord, output_path: Path) -> bool:
         """Download a single setup with retry logic.
 
-        Attempts to download the setup with exponential backoff retry logic.
-        On success, marks the setup as downloaded in the state.
+        Attempts to download the setup ZIP and extract it with exponential
+        backoff retry logic. On success, marks the setup as downloaded in state.
 
         Args:
             setup: Setup to download
-            output_path: Base output directory
+            output_path: Base output directory (iRacing setups folder)
 
         Returns:
             True if download was successful, False otherwise
         """
-        output_dir = output_path / setup.get_output_directory()
-        file_path = output_dir / setup.get_output_filename()
-
         retry_count = 0
         last_error = ""
 
         while retry_count <= self._max_retries:
             try:
-                # Create output directory
-                output_dir.mkdir(parents=True, exist_ok=True)
-
-                # Download the setup
+                # Download and extract the setup ZIP
                 logger.debug(
                     f"Downloading setup {setup.id} (attempt {retry_count + 1})"
                 )
-                downloaded_path = await self._provider.download_setup(
+                extracted_files = await self._provider.download_setup(
                     setup, output_path
                 )
 
-                # Verify the file was created
-                if not downloaded_path.exists():
-                    msg = "Downloaded file does not exist"
+                # Verify files were extracted
+                if not extracted_files:
+                    msg = "No .sto files extracted from ZIP"
                     raise FileNotFoundError(msg)
 
-                # Mark as downloaded in state
+                # Verify all files exist
+                for file_path in extracted_files:
+                    if not file_path.exists():
+                        msg = f"Extracted file does not exist: {file_path}"
+                        raise FileNotFoundError(msg)
+
+                # Mark as downloaded in state (store first file path for reference)
                 self._state.mark_downloaded(
                     self._provider.name,
                     setup.id,
                     setup.updated_date,
-                    downloaded_path,
+                    extracted_files,
                 )
 
-                logger.info(f"Successfully downloaded setup {setup.id} to {file_path}")
+                logger.info(
+                    f"Successfully downloaded setup {setup.id}: "
+                    f"{len(extracted_files)} files extracted"
+                )
                 return True
 
             except asyncio.CancelledError:
@@ -377,7 +378,5 @@ class SetupDownloader:
                     )
 
         # All retries failed
-        # Store error in result (this is a bit hacky, but works for now)
-        # In a production system, we might want a better way to track this
         logger.error(f"Setup {setup.id} failed permanently: {last_error}")
         return False

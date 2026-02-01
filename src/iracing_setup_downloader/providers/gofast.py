@@ -1,6 +1,8 @@
 """GoFast setup provider implementation."""
 
+import io
 import logging
+import zipfile
 from pathlib import Path
 
 import aiohttp
@@ -128,13 +130,23 @@ class GoFastProvider(SetupProvider):
                     logger.error(msg)
                     raise GoFastAPIError(msg) from e
 
-                if not isinstance(data, list):
-                    msg = f"Expected list response from API, got {type(data).__name__}"
+                # Handle API response structure: {status, msg, data: {records: [...]}}
+                if isinstance(data, dict):
+                    if not data.get("status"):
+                        msg = f"API returned error: {data.get('msg', 'Unknown error')}"
+                        logger.error(msg)
+                        raise GoFastAPIError(msg)
+                    records = data.get("data", {}).get("records", [])
+                elif isinstance(data, list):
+                    # Fallback for direct list response
+                    records = data
+                else:
+                    msg = f"Unexpected response format from API: {type(data).__name__}"
                     logger.error(msg)
                     raise GoFastAPIError(msg)
 
                 setups = []
-                for item in data:
+                for item in records:
                     try:
                         setup_record = SetupRecord(**item)
                         setups.append(setup_record)
@@ -156,38 +168,24 @@ class GoFastProvider(SetupProvider):
             logger.error(msg)
             raise GoFastAPIError(msg) from e
 
-    async def download_setup(self, setup: SetupRecord, output_path: Path) -> Path:
-        """Download a specific setup from GoFast.
+    async def download_setup(self, setup: SetupRecord, output_path: Path) -> list[Path]:
+        """Download and extract a setup ZIP from GoFast.
 
-        Downloads the setup file and saves it to the appropriate location
-        based on the setup's metadata (car, track, etc.).
+        Downloads the setup ZIP file and extracts its contents to the output path.
+        The ZIP contains the proper iRacing folder structure that is preserved.
 
         Args:
             setup: The SetupRecord to download
-            output_path: Base output directory path
+            output_path: Base output directory path (typically iRacing setups folder)
 
         Returns:
-            Path to the downloaded setup file
+            List of paths to the extracted setup files (.sto files)
 
         Raises:
-            GoFastDownloadError: If the download fails
+            GoFastDownloadError: If the download or extraction fails
             GoFastAuthenticationError: If authentication fails during download
         """
         logger.info("Downloading setup: %s", setup.download_name)
-
-        # Create output directory structure: output_path / car / track /
-        output_directory = output_path / setup.get_output_directory()
-        try:
-            output_directory.mkdir(parents=True, exist_ok=True)
-            logger.debug("Created output directory: %s", output_directory)
-        except OSError as e:
-            msg = f"Failed to create output directory {output_directory}: {e}"
-            logger.error(msg)
-            raise GoFastDownloadError(msg) from e
-
-        # Determine output file path
-        output_file = output_directory / setup.get_output_filename()
-        logger.debug("Downloading to: %s", output_file)
 
         try:
             session = await self._get_session()
@@ -216,7 +214,7 @@ class GoFastProvider(SetupProvider):
                     logger.error(msg)
                     raise GoFastDownloadError(msg)
 
-                # Download file content
+                # Download ZIP content
                 try:
                     content = await response.read()
                 except aiohttp.ClientError as e:
@@ -224,20 +222,14 @@ class GoFastProvider(SetupProvider):
                     logger.error(msg)
                     raise GoFastDownloadError(msg) from e
 
-                # Write to file
-                try:
-                    output_file.write_bytes(content)
-                    logger.info(
-                        "Successfully downloaded setup to %s (%d bytes)",
-                        output_file,
-                        len(content),
-                    )
-                except OSError as e:
-                    msg = f"Failed to write setup file to {output_file}: {e}"
-                    logger.error(msg)
-                    raise GoFastDownloadError(msg) from e
-
-                return output_file
+                # Extract ZIP file
+                extracted_files = self._extract_zip(content, output_path, setup)
+                logger.info(
+                    "Successfully extracted %d files from setup %s",
+                    len(extracted_files),
+                    setup.download_name,
+                )
+                return extracted_files
 
         except (GoFastAuthenticationError, GoFastDownloadError):
             raise
@@ -249,6 +241,74 @@ class GoFastProvider(SetupProvider):
             msg = f"Unexpected error while downloading setup: {e}"
             logger.error(msg)
             raise GoFastDownloadError(msg) from e
+
+    def _extract_zip(
+        self, content: bytes, output_path: Path, setup: SetupRecord
+    ) -> list[Path]:
+        """Extract ZIP content to the output path.
+
+        Preserves the folder structure inside the ZIP which contains
+        the iRacing-compatible directory structure.
+
+        Args:
+            content: ZIP file content as bytes
+            output_path: Base directory to extract to
+            setup: The setup record (for logging)
+
+        Returns:
+            List of paths to extracted .sto files
+
+        Raises:
+            GoFastDownloadError: If extraction fails
+        """
+        extracted_files: list[Path] = []
+
+        try:
+            with zipfile.ZipFile(io.BytesIO(content)) as zf:
+                # Check for bad ZIP file
+                if zf.testzip() is not None:
+                    msg = f"Corrupted ZIP file for setup {setup.id}"
+                    logger.error(msg)
+                    raise GoFastDownloadError(msg)
+
+                for zip_info in zf.infolist():
+                    # Skip directories
+                    if zip_info.is_dir():
+                        continue
+
+                    # Normalize path separators (Windows -> Unix)
+                    relative_path = zip_info.filename.replace("\\", "/")
+
+                    # Security: prevent path traversal
+                    if ".." in relative_path or relative_path.startswith("/"):
+                        logger.warning(
+                            "Skipping potentially unsafe path: %s", relative_path
+                        )
+                        continue
+
+                    output_file = output_path / relative_path
+                    output_file.parent.mkdir(parents=True, exist_ok=True)
+
+                    # Extract file
+                    with zf.open(zip_info) as src:
+                        output_file.write_bytes(src.read())
+
+                    logger.debug("Extracted: %s", output_file)
+
+                    # Track .sto files
+                    if output_file.suffix.lower() == ".sto":
+                        extracted_files.append(output_file)
+
+        except zipfile.BadZipFile as e:
+            msg = f"Invalid ZIP file for setup {setup.id}: {e}"
+            logger.error(msg)
+            raise GoFastDownloadError(msg) from e
+        except OSError as e:
+            msg = f"Failed to extract setup {setup.id}: {e}"
+            logger.error(msg)
+            raise GoFastDownloadError(msg) from e
+
+        return extracted_files
 
     async def close(self) -> None:
         """Clean up provider resources.

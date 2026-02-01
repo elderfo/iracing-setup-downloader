@@ -119,7 +119,13 @@ class TestGoFastProvider:
         """Test successful fetch of setups."""
         mock_response = MagicMock()
         mock_response.status = 200
-        mock_response.json = AsyncMock(return_value=sample_api_response)
+        # Wrap in API response structure
+        api_response = {
+            "status": True,
+            "msg": "Success",
+            "data": {"records": sample_api_response},
+        }
+        mock_response.json = AsyncMock(return_value=api_response)
 
         with patch.object(
             gofast_provider, "_get_session", new_callable=AsyncMock
@@ -202,10 +208,13 @@ class TestGoFastProvider:
                 await gofast_provider.fetch_setups()
 
     async def test_fetch_setups_non_list_response(self, gofast_provider):
-        """Test fetch_setups with non-list response."""
+        """Test fetch_setups with API error response."""
         mock_response = MagicMock()
         mock_response.status = 200
-        mock_response.json = AsyncMock(return_value={"error": "Invalid response"})
+        # API returns error status
+        mock_response.json = AsyncMock(
+            return_value={"status": False, "msg": "Invalid response"}
+        )
 
         with patch.object(
             gofast_provider, "_get_session", new_callable=AsyncMock
@@ -240,7 +249,13 @@ class TestGoFastProvider:
 
         mock_response = MagicMock()
         mock_response.status = 200
-        mock_response.json = AsyncMock(return_value=invalid_response)
+        # Wrap in API response structure
+        api_response = {
+            "status": True,
+            "msg": "Success",
+            "data": {"records": invalid_response},
+        }
+        mock_response.json = AsyncMock(return_value=api_response)
 
         with patch.object(
             gofast_provider, "_get_session", new_callable=AsyncMock
@@ -270,8 +285,19 @@ class TestGoFastProvider:
     async def test_download_setup_success(
         self, gofast_provider, sample_setup_record, temp_dir
     ):
-        """Test successful setup download."""
-        setup_content = b"setup file content"
+        """Test successful setup download and extraction."""
+        import io
+        import zipfile
+
+        # Create a valid ZIP file with a .sto file
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            # Add a .sto file with proper path structure
+            zf.writestr(
+                "Ferrari 488 GT3 Evo/Spa-Francorchamps/setup.sto", b"setup file content"
+            )
+
+        setup_content = zip_buffer.getvalue()
         mock_response = MagicMock()
         mock_response.status = 200
         mock_response.read = AsyncMock(return_value=setup_content)
@@ -283,22 +309,19 @@ class TestGoFastProvider:
             mock_session.get.return_value.__aenter__.return_value = mock_response
             mock_get_session.return_value = mock_session
 
-            result_path = await gofast_provider.download_setup(
+            result_paths = await gofast_provider.download_setup(
                 sample_setup_record, temp_dir
             )
 
+            # Should return a list of paths
+            assert isinstance(result_paths, list)
+            assert len(result_paths) == 1
+
+            result_path = result_paths[0]
             assert result_path.exists()
             assert result_path.is_file()
-            assert result_path.read_bytes() == setup_content
-
-            # Verify directory structure
-            expected_dir = temp_dir / sample_setup_record.get_output_directory()
-            assert expected_dir.exists()
-            assert result_path.parent == expected_dir
-
-            # Verify filename
-            expected_filename = sample_setup_record.get_output_filename()
-            assert result_path.name == expected_filename
+            assert result_path.suffix == ".sto"
+            assert result_path.read_bytes() == b"setup file content"
 
     async def test_download_setup_authentication_error(
         self, gofast_provider, sample_setup_record, temp_dir
@@ -405,7 +428,17 @@ class TestGoFastProvider:
         self, gofast_provider, sample_setup_record, temp_dir
     ):
         """Test download_setup creates nested directory structure."""
-        setup_content = b"setup file content"
+        import io
+        import zipfile
+
+        # Create a valid ZIP file with nested structure
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(
+                "Ferrari 488 GT3 Evo/Spa-Francorchamps/setup.sto", b"setup file content"
+            )
+
+        setup_content = zip_buffer.getvalue()
         mock_response = MagicMock()
         mock_response.status = 200
         mock_response.read = AsyncMock(return_value=setup_content)
@@ -417,17 +450,21 @@ class TestGoFastProvider:
             mock_session.get.return_value.__aenter__.return_value = mock_response
             mock_get_session.return_value = mock_session
 
-            await gofast_provider.download_setup(sample_setup_record, temp_dir)
+            result_paths = await gofast_provider.download_setup(
+                sample_setup_record, temp_dir
+            )
 
             # Verify nested directory was created
-            expected_dir = temp_dir / sample_setup_record.get_output_directory()
-            assert expected_dir.exists()
-            assert expected_dir.is_dir()
+            assert len(result_paths) == 1
 
             # Verify all parent directories were created
-            car_dir = temp_dir / sample_setup_record.car
+            car_dir = temp_dir / "Ferrari 488 GT3 Evo"
             assert car_dir.exists()
             assert car_dir.is_dir()
+
+            track_dir = car_dir / "Spa-Francorchamps"
+            assert track_dir.exists()
+            assert track_dir.is_dir()
 
     async def test_close_closes_session(self, gofast_provider):
         """Test close method closes the session."""
@@ -457,7 +494,17 @@ class TestGoFastProviderIntegration:
 
     async def test_full_workflow(self, gofast_provider, sample_api_response, temp_dir):
         """Test full workflow: fetch and download."""
-        setup_content = b"setup file content"
+        import io
+        import zipfile
+
+        # Create a valid ZIP file
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(
+                "Ferrari 488 GT3 Evo/Spa-Francorchamps/setup.sto", b"setup file content"
+            )
+
+        setup_content = zip_buffer.getvalue()
 
         # Mock all HTTP calls
         with patch.object(
@@ -468,7 +515,12 @@ class TestGoFastProviderIntegration:
             # Mock fetch_setups call
             fetch_response = MagicMock()
             fetch_response.status = 200
-            fetch_response.json = AsyncMock(return_value=sample_api_response)
+            api_response = {
+                "status": True,
+                "msg": "Success",
+                "data": {"records": sample_api_response},
+            }
+            fetch_response.json = AsyncMock(return_value=api_response)
 
             # Mock download call
             download_response = MagicMock()
@@ -493,9 +545,11 @@ class TestGoFastProviderIntegration:
             assert len(setups) == 2
 
             # 2. Download first setup
-            result_path = await gofast_provider.download_setup(setups[0], temp_dir)
-            assert result_path.exists()
-            assert result_path.read_bytes() == setup_content
+            result_paths = await gofast_provider.download_setup(setups[0], temp_dir)
+            assert isinstance(result_paths, list)
+            assert len(result_paths) == 1
+            assert result_paths[0].exists()
+            assert result_paths[0].read_bytes() == b"setup file content"
 
             # 3. Close
             await gofast_provider.close()

@@ -16,18 +16,18 @@ class TestDownloadRecord:
         """Test creating a DownloadRecord instance."""
         record = DownloadRecord(
             updated_date="2024-01-15T10:30:00",
-            file_path="/path/to/setup.sto",
+            file_paths=["/path/to/setup.sto"],
         )
 
         assert record.updated_date == "2024-01-15T10:30:00"
-        assert record.file_path == "/path/to/setup.sto"
+        assert record.file_paths == ["/path/to/setup.sto"]
 
     def test_download_record_validates_datetime(self):
         """Test that DownloadRecord validates datetime format."""
         # Valid ISO format
         record = DownloadRecord(
             updated_date="2024-01-15T10:30:00.123456",
-            file_path="/path/to/setup.sto",
+            file_paths=["/path/to/setup.sto"],
         )
         assert record.updated_date == "2024-01-15T10:30:00.123456"
 
@@ -35,21 +35,44 @@ class TestDownloadRecord:
         with pytest.raises(ValueError, match="Invalid ISO datetime format"):
             DownloadRecord(
                 updated_date="not-a-datetime",
-                file_path="/path/to/setup.sto",
+                file_paths=["/path/to/setup.sto"],
             )
 
     def test_download_record_serialization(self):
         """Test that DownloadRecord can be serialized to dict."""
         record = DownloadRecord(
             updated_date="2024-01-15T10:30:00",
-            file_path="/path/to/setup.sto",
+            file_paths=["/path/to/setup.sto"],
         )
         data = record.model_dump()
 
         assert data == {
             "updated_date": "2024-01-15T10:30:00",
-            "file_path": "/path/to/setup.sto",
+            "file_paths": ["/path/to/setup.sto"],
+            "file_path": None,
         }
+
+    def test_download_record_get_all_paths(self):
+        """Test get_all_paths method."""
+        # With file_paths
+        record = DownloadRecord(
+            updated_date="2024-01-15T10:30:00",
+            file_paths=["/path/to/setup1.sto", "/path/to/setup2.sto"],
+        )
+        assert record.get_all_paths() == ["/path/to/setup1.sto", "/path/to/setup2.sto"]
+
+        # With legacy file_path
+        record_legacy = DownloadRecord(
+            updated_date="2024-01-15T10:30:00",
+            file_path="/path/to/setup.sto",
+        )
+        assert record_legacy.get_all_paths() == ["/path/to/setup.sto"]
+
+        # Empty
+        record_empty = DownloadRecord(
+            updated_date="2024-01-15T10:30:00",
+        )
+        assert record_empty.get_all_paths() == []
 
 
 class TestDownloadState:
@@ -110,7 +133,7 @@ class TestDownloadState:
                 provider="gofast",
                 setup_id=123,
                 updated_date=datetime.now(),
-                file_path=Path("/tmp/setup.sto"),
+                file_paths=[Path("/tmp/setup.sto")],
             )
 
     def test_mark_downloaded_stores_record(self, temp_dir):
@@ -127,14 +150,13 @@ class TestDownloadState:
             provider="gofast",
             setup_id=123,
             updated_date=now,
-            file_path=file_path,
+            file_paths=[file_path],
         )
 
         assert state.is_downloaded(
             provider="gofast",
             setup_id=123,
             updated_date=now,
-            file_path=file_path,
         )
 
     def test_is_downloaded_checks_file_exists(self, temp_dir):
@@ -151,7 +173,7 @@ class TestDownloadState:
             provider="gofast",
             setup_id=123,
             updated_date=now,
-            file_path=file_path,
+            file_paths=[file_path],
         )
 
         # Should return False because file doesn't exist
@@ -159,7 +181,6 @@ class TestDownloadState:
             provider="gofast",
             setup_id=123,
             updated_date=now,
-            file_path=file_path,
         )
 
         # Create the file
@@ -170,7 +191,6 @@ class TestDownloadState:
             provider="gofast",
             setup_id=123,
             updated_date=now,
-            file_path=file_path,
         )
 
     def test_is_downloaded_checks_updated_date(self, temp_dir):
@@ -189,7 +209,7 @@ class TestDownloadState:
             provider="gofast",
             setup_id=123,
             updated_date=old_date,
-            file_path=file_path,
+            file_paths=[file_path],
         )
 
         # Should return False with new date
@@ -197,7 +217,6 @@ class TestDownloadState:
             provider="gofast",
             setup_id=123,
             updated_date=new_date,
-            file_path=file_path,
         )
 
         # Should return True with old date
@@ -205,7 +224,6 @@ class TestDownloadState:
             provider="gofast",
             setup_id=123,
             updated_date=old_date,
-            file_path=file_path,
         )
 
     def test_is_downloaded_provider_not_in_state(self, temp_dir):
@@ -218,7 +236,6 @@ class TestDownloadState:
             provider="unknown",
             setup_id=123,
             updated_date=datetime.now(),
-            file_path=Path("/tmp/setup.sto"),
         )
 
     def test_is_downloaded_id_not_in_state(self, temp_dir):
@@ -235,7 +252,7 @@ class TestDownloadState:
             provider="gofast",
             setup_id=123,
             updated_date=datetime.now(),
-            file_path=file_path,
+            file_paths=[file_path],
         )
 
         # Check for different ID
@@ -243,7 +260,6 @@ class TestDownloadState:
             provider="gofast",
             setup_id=456,
             updated_date=datetime.now(),
-            file_path=file_path,
         )
 
     def test_save_and_load_persistence(self, temp_dir):
@@ -262,7 +278,7 @@ class TestDownloadState:
             provider="gofast",
             setup_id=123,
             updated_date=now,
-            file_path=file_path,
+            file_paths=[file_path],
         )
         state1.save()
 
@@ -274,7 +290,6 @@ class TestDownloadState:
             provider="gofast",
             setup_id=123,
             updated_date=now,
-            file_path=file_path,
         )
 
     def test_get_stats_empty_state(self, temp_dir):
@@ -301,7 +316,7 @@ class TestDownloadState:
                 provider="gofast",
                 setup_id=i,
                 updated_date=now,
-                file_path=file_path,
+                file_paths=[file_path],
             )
 
         stats = state.get_stats()
@@ -324,7 +339,7 @@ class TestDownloadState:
                 provider="gofast",
                 setup_id=i,
                 updated_date=now,
-                file_path=file_path,
+                file_paths=[file_path],
             )
 
         # Add 2 from craigs
@@ -335,7 +350,7 @@ class TestDownloadState:
                 provider="craigs",
                 setup_id=i,
                 updated_date=now,
-                file_path=file_path,
+                file_paths=[file_path],
             )
 
         stats = state.get_stats()
@@ -355,7 +370,7 @@ class TestDownloadState:
                 provider="gofast",
                 setup_id=123,
                 updated_date=now,
-                file_path=file_path,
+                file_paths=[file_path],
             )
 
         # File should be saved automatically
@@ -367,7 +382,6 @@ class TestDownloadState:
                 provider="gofast",
                 setup_id=123,
                 updated_date=now,
-                file_path=file_path,
             )
 
     def test_context_manager_no_save_on_exception(self, temp_dir):
@@ -400,7 +414,7 @@ class TestDownloadState:
             provider="gofast",
             setup_id=123,
             updated_date=now,
-            file_path=file_path,
+            file_paths=[file_path],
         )
 
         # File should exist without calling save()
@@ -420,7 +434,7 @@ class TestDownloadState:
             provider="gofast",
             setup_id=123,
             updated_date=now,
-            file_path=file_path,
+            file_paths=[file_path],
         )
         state.save()
 
@@ -430,7 +444,7 @@ class TestDownloadState:
         assert "gofast" in data
         assert "123" in data["gofast"]
         assert data["gofast"]["123"]["updated_date"] == now.isoformat()
-        assert data["gofast"]["123"]["file_path"] == str(file_path.absolute())
+        assert data["gofast"]["123"]["file_paths"] == [str(file_path.absolute())]
 
     def test_handles_corrupted_records(self, temp_dir):
         """Test that loading handles corrupted records gracefully."""
@@ -441,11 +455,11 @@ class TestDownloadState:
             "gofast": {
                 "123": {
                     "updated_date": "not-a-date",
-                    "file_path": "/tmp/test.sto",
+                    "file_paths": ["/tmp/test.sto"],
                 },
                 "456": {
                     "updated_date": "2024-01-15T10:30:00",
-                    "file_path": "/tmp/good.sto",
+                    "file_paths": ["/tmp/good.sto"],
                 },
             }
         }
@@ -473,7 +487,7 @@ class TestDownloadState:
             provider="gofast",
             setup_id=123,
             updated_date=now,
-            file_path=file_path,
+            file_paths=[file_path],
         )
         state.save()
 
@@ -497,14 +511,14 @@ class TestDownloadState:
             provider="gofast",
             setup_id=123,
             updated_date=now,
-            file_path=file_path,
+            file_paths=[file_path],
         )
         state.save()
 
         # Verify stored as absolute path
         data = json.loads(state_file.read_text())
-        stored_path = data["gofast"]["123"]["file_path"]
-        assert Path(stored_path).is_absolute()
+        stored_paths = data["gofast"]["123"]["file_paths"]
+        assert Path(stored_paths[0]).is_absolute()
 
     def test_load_invalid_json(self, temp_dir):
         """Test that loading invalid JSON raises JSONDecodeError."""
@@ -536,7 +550,6 @@ class TestDownloadState:
             provider="gofast",
             setup_id=123,
             updated_date=datetime.now(),
-            file_path=Path("/tmp/setup.sto"),
         )
 
         assert result is False

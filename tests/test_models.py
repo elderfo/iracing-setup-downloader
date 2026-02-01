@@ -193,55 +193,6 @@ class TestSetupRecord:
 
         assert record.season == "26S1W8"
 
-    def test_get_output_filename(self, sample_setup_record_data):
-        """Test output filename generation."""
-        record = SetupRecord(**sample_setup_record_data)
-
-        filename = record.get_output_filename()
-
-        assert filename == "GoFast_IMSA_26S1W8_Spa-Francorchamps_12345.sto"
-
-    def test_get_output_filename_with_spaces_in_track(self, sample_setup_record_data):
-        """Test output filename generation with spaces in track name."""
-        sample_setup_record_data["download_name"] = (
-            "IR - V1 - Ferrari 488 GT3 Evo - Road America"
-        )
-        record = SetupRecord(**sample_setup_record_data)
-
-        filename = record.get_output_filename()
-
-        assert filename == "GoFast_IMSA_26S1W8_RoadAmerica_12345.sto"
-
-    def test_get_output_filename_with_special_chars(self, sample_setup_record_data):
-        """Test output filename generation with special characters in track."""
-        sample_setup_record_data["download_name"] = (
-            "IR - V1 - Ferrari 488 GT3 Evo - Circuit de Barcelona-Catalunya"
-        )
-        record = SetupRecord(**sample_setup_record_data)
-
-        filename = record.get_output_filename()
-
-        assert filename == "GoFast_IMSA_26S1W8_CircuitdeBarcelona-Catalunya_12345.sto"
-
-    def test_get_output_directory(self, sample_setup_record_data):
-        """Test output directory generation."""
-        record = SetupRecord(**sample_setup_record_data)
-
-        directory = record.get_output_directory()
-
-        assert directory == "Ferrari 488 GT3 Evo/Spa-Francorchamps/"
-
-    def test_get_output_directory_with_spaces(self, sample_setup_record_data):
-        """Test output directory generation preserves spaces."""
-        sample_setup_record_data["download_name"] = (
-            "IR - V1 - Audi R8 LMS GT3 - Road America"
-        )
-        record = SetupRecord(**sample_setup_record_data)
-
-        directory = record.get_output_directory()
-
-        assert directory == "Audi R8 LMS GT3/Road America/"
-
     def test_validation_empty_download_name(self, sample_setup_record_data):
         """Test validation fails with empty download_name."""
         sample_setup_record_data["download_name"] = ""

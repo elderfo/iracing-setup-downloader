@@ -138,31 +138,3 @@ class SetupRecord(BaseModel):
             The season identifier with spaces removed
         """
         return self.ver.replace(" ", "")
-
-    def get_output_filename(self) -> str:
-        """Generate the output filename for this setup.
-
-        Format: GoFast_<series>_<season>_<track>_<id>.sto
-        where:
-        - series: The series name from the series field
-        - season: Derived from ver (e.g., "26 S1 W8" -> "26S1W8")
-        - track: Track name with spaces removed
-        - id: The setup record ID
-
-        Returns:
-            The formatted filename
-        """
-        # Remove spaces from track name
-        track_normalized = self.track.replace(" ", "")
-
-        return f"GoFast_{self.series}_{self.season}_{track_normalized}_{self.id}.sto"
-
-    def get_output_directory(self) -> str:
-        """Generate the output directory relative path for this setup.
-
-        Format: <car>/<track>/
-
-        Returns:
-            The relative directory path
-        """
-        return f"{self.car}/{self.track}/"
