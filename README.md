@@ -1,0 +1,435 @@
+# iRacing Setup Downloader
+
+A fast, efficient CLI tool for downloading iRacing setups from GoFast with intelligent caching, concurrent downloads, and smart rate limiting. Automatically organizes setups by car and track, skips already-downloaded files, and provides rich progress visualization.
+
+## Features
+
+- **Asynchronous Concurrent Downloads** - Download multiple setups in parallel with configurable concurrency limits (1-20)
+- **Smart Rate Limiting** - Configurable random delays between requests to avoid server overload
+- **Incremental Updates** - Tracks downloaded setups and skips files that haven't changed
+- **Organized Structure** - Automatically creates folders by car name and track for easy browsing
+- **Rich Progress Bars** - Visual feedback with download speed, count, and estimated time remaining
+- **Retry Logic** - Automatic exponential backoff retry strategy for failed downloads
+- **Robust Error Handling** - Detailed error reporting for troubleshooting
+- **State Tracking** - Persistent download history prevents redundant downloads across sessions
+
+## Installation
+
+### Prerequisites
+
+- Python 3.11 or higher
+- Poetry for package management
+
+### Setup
+
+Clone the repository and install dependencies:
+
+```bash
+# Clone the repository
+git clone <repository-url>
+cd iracing-setup-downloader
+
+# Install dependencies with Poetry
+poetry install
+
+# (Optional) Install pre-commit hooks for development
+poetry run pre-commit install
+```
+
+## Configuration
+
+### Environment Variables
+
+The tool reads configuration from environment variables and a `.env` file. Configuration priority (highest to lowest):
+
+1. Environment variables
+2. `.env` file
+3. Default values
+
+### Setting Up Configuration
+
+Copy the example configuration file:
+
+```bash
+cp .env.example .env
+```
+
+Then edit `.env` with your settings:
+
+```bash
+# GoFast API Authentication Token (required)
+GOFAST_TOKEN=your_token_here
+
+# Directory for downloaded setups (optional, defaults to ~/Documents/iRacing/setups)
+IRACING_SETUPS_PATH=~/Documents/iRacing/setups
+
+# Download concurrency settings (optional)
+MAX_CONCURRENT=5        # Number of parallel downloads (1-20)
+MIN_DELAY=0.5          # Minimum seconds between downloads
+MAX_DELAY=1.5          # Maximum seconds between downloads
+
+# HTTP settings (optional)
+TIMEOUT=30             # Connection timeout in seconds
+MAX_RETRIES=3          # Retry attempts for failed downloads
+```
+
+### Configuration Details
+
+| Variable | Default | Range | Description |
+|----------|---------|-------|-------------|
+| `GOFAST_TOKEN` | Required | - | GoFast API bearer token |
+| `IRACING_SETUPS_PATH` | `~/Documents/iRacing/setups` | - | Directory to save setups |
+| `MAX_CONCURRENT` | 5 | 1-20 | Parallel download limit |
+| `MIN_DELAY` | 0.5 | >= 0 | Minimum delay between downloads (seconds) |
+| `MAX_DELAY` | 1.5 | >= MIN_DELAY | Maximum delay between downloads (seconds) |
+| `TIMEOUT` | 30 | >= 1 | HTTP request timeout (seconds) |
+| `MAX_RETRIES` | 3 | >= 0 | Failed download retry attempts |
+
+### Getting Your GoFast Token
+
+1. Visit GoFast in your browser
+2. Open Developer Tools (F12 or Ctrl+Shift+I)
+3. Navigate to the Network tab
+4. Make a request to any GoFast API endpoint
+5. Look for the Authorization header in the request headers
+6. Copy the entire value (including "Bearer " prefix if present) to `GOFAST_TOKEN`
+
+## Usage
+
+### List Available Setups
+
+View all available setups from GoFast without downloading:
+
+```bash
+poetry run iracing-setup-downloader list gofast
+```
+
+This displays:
+- Setup ID
+- Car name
+- Track name
+- Setup version
+- Series category
+- Last updated date
+
+### Download All Setups
+
+Download all available setups that haven't been previously downloaded:
+
+```bash
+poetry run iracing-setup-downloader download gofast
+```
+
+The tool will:
+1. Fetch all setups from GoFast
+2. Check local state to identify new setups
+3. Skip setups already downloaded (unless updated)
+4. Download new setups with progress visualization
+
+### Dry Run (Preview Downloads)
+
+Preview what would be downloaded without actually downloading:
+
+```bash
+poetry run iracing-setup-downloader download gofast --dry-run
+```
+
+Useful for:
+- Testing authentication
+- Verifying configuration
+- Estimating download time
+- Checking available setups
+
+### Custom Output Directory
+
+Specify a non-default download directory:
+
+```bash
+poetry run iracing-setup-downloader download gofast --output ./my-setups
+```
+
+Also supports:
+```bash
+poetry run iracing-setup-downloader download gofast --output ~/Downloads/iRacing
+```
+
+### View Help
+
+```bash
+poetry run iracing-setup-downloader --help
+poetry run iracing-setup-downloader download gofast --help
+poetry run iracing-setup-downloader list gofast --help
+```
+
+## Output Structure
+
+Downloaded setups are organized by car and track:
+
+```
+~/Documents/iRacing/setups/
+├── Ferrari 296 GT3/
+│   ├── Jerez Moto/
+│   │   ├── GoFast_IMSA_26S1W8_JerezMoto_267624.sto
+│   │   └── GoFast_IMSA_26S1W9_JerezMoto_268451.sto
+│   └── Le Mans/
+│       └── GoFast_IMSA_26S1W8_LeMans_267625.sto
+├── Porsche 911 GT3 R/
+│   └── Road Atlanta/
+│       └── GoFast_GT_WORLD_26S1W8_RoadAtlanta_267626.sto
+└── McLaren 720S GT3/
+    └── Spa/
+        └── GoFast_IMSA_26S1W8_Spa_267627.sto
+```
+
+### Filename Format
+
+Setups are named: `GoFast_<series>_<season>_<track>_<id>.sto`
+
+- `series` - Racing series (IMSA, GT World Challenge, etc.)
+- `season` - Season identifier (26S1W8 = Season 26, Week 1, Session 8)
+- `track` - Track name with spaces removed
+- `id` - Unique setup ID for tracking
+
+## State Management
+
+Downloaded setup information is tracked in:
+
+```
+~/.iracing-setup-downloader/state.json
+```
+
+This file stores:
+- Provider name
+- Setup ID
+- Last update timestamp
+- File path
+
+The state file prevents re-downloading setups that haven't changed. If a setup is updated on GoFast, it will be re-downloaded automatically.
+
+**Important:** Do not manually edit the state.json file. The tool manages it automatically.
+
+## Development
+
+### Running Tests
+
+Run the test suite:
+
+```bash
+poetry run pytest
+```
+
+Run tests with coverage report:
+
+```bash
+poetry run pytest --cov=iracing_setup_downloader --cov-report=term-missing
+```
+
+### Linting and Formatting
+
+Check code style:
+
+```bash
+poetry run ruff check .
+```
+
+Format code:
+
+```bash
+poetry run ruff format .
+```
+
+The project includes pre-commit hooks that automatically run formatting and linting before commits.
+
+### Project Structure
+
+```
+iracing-setup-downloader/
+├── src/iracing_setup_downloader/
+│   ├── __init__.py              # Version and metadata
+│   ├── cli.py                   # Command-line interface
+│   ├── config.py                # Configuration management
+│   ├── models.py                # Data models
+│   ├── state.py                 # Download state tracking
+│   ├── downloader.py            # Download orchestration
+│   └── providers/
+│       ├── base.py              # Provider interface
+│       ├── __init__.py
+│       └── gofast.py            # GoFast provider implementation
+├── tests/                       # Test suite
+├── pyproject.toml              # Poetry configuration
+├── .env.example                # Configuration template
+└── README.md                   # This file
+```
+
+### Architecture Overview
+
+**CLI Layer** (`cli.py`) - Command-line interface using Typer
+
+**Configuration** (`config.py`) - Settings management using Pydantic
+
+**Models** (`models.py`) - Data structures for setups and API responses
+
+**Providers** (`providers/`) - Pluggable provider implementations
+- Base interface for consistent provider behavior
+- GoFast provider for fetching and downloading setups
+
+**Downloader** (`downloader.py`) - Download orchestration
+- Concurrent download management
+- Retry logic with exponential backoff
+- Progress visualization with Rich library
+
+**State Management** (`state.py`) - Download history tracking
+- Persistent storage of downloaded setups
+- Prevents duplicate downloads
+- Tracks file paths and modification dates
+
+### Adding New Providers
+
+To add support for another setup provider:
+
+1. Create a new file in `src/iracing_setup_downloader/providers/`
+2. Implement the `SetupProvider` base class
+3. Override `fetch_setups()` and `download_setup()` methods
+4. Add provider-specific configuration to `config.py`
+5. Register the provider in the CLI
+
+See `providers/gofast.py` for an example implementation.
+
+## Troubleshooting
+
+### Authentication Failed
+
+**Error:** "Authentication failed: Invalid or expired token"
+
+**Solution:**
+- Verify `GOFAST_TOKEN` is correctly set in `.env`
+- Ensure the token includes the "Bearer " prefix if required
+- Check that the token hasn't expired
+- Regenerate the token from GoFast and update `.env`
+
+### Connection Timeout
+
+**Error:** "Connection timeout" or "Network error while fetching setups"
+
+**Solution:**
+- Increase the `TIMEOUT` setting in `.env` (e.g., `TIMEOUT=60`)
+- Check internet connection stability
+- Try reducing `MAX_CONCURRENT` to lighten server load
+- Retry the operation (built-in retry logic will help)
+
+### Disk Space Issues
+
+**Error:** "Failed to write setup file" or similar filesystem errors
+
+**Solution:**
+- Verify sufficient disk space available
+- Check write permissions on `IRACING_SETUPS_PATH`
+- Ensure the directory path is valid and accessible
+
+### Permission Denied
+
+**Error:** "Permission denied" when writing files
+
+**Solution:**
+```bash
+# Check permissions on setups directory
+ls -ld ~/Documents/iRacing/setups
+
+# Grant write permissions if needed
+chmod u+w ~/Documents/iRacing/setups
+```
+
+### Corrupted State File
+
+**Error:** "Invalid JSON in state file" or state-related errors
+
+**Solution:**
+```bash
+# Backup current state
+cp ~/.iracing-setup-downloader/state.json ~/.iracing-setup-downloader/state.json.bak
+
+# Remove corrupted state (will be recreated)
+rm ~/.iracing-setup-downloader/state.json
+
+# Re-run the downloader to rebuild state
+poetry run iracing-setup-downloader download gofast
+```
+
+## Performance Tuning
+
+### For Faster Downloads
+
+Increase concurrency and reduce delays:
+
+```bash
+MAX_CONCURRENT=15
+MIN_DELAY=0.1
+MAX_DELAY=0.5
+```
+
+**Warning:** Server may rate-limit or block if requests are too aggressive.
+
+### For Server-Friendly Behavior
+
+Decrease concurrency and increase delays:
+
+```bash
+MAX_CONCURRENT=2
+MIN_DELAY=2.0
+MAX_DELAY=4.0
+```
+
+### Recommended Defaults
+
+The default settings balance speed and server courtesy:
+- `MAX_CONCURRENT=5` - Reasonable parallelism
+- `MIN_DELAY=0.5` - Prevents thundering herd
+- `MAX_DELAY=1.5` - Natural request spacing
+
+## FAQ
+
+**Q: Will this delete my existing setups?**
+A: No. The downloader only adds new or updated setups. Existing files are never deleted.
+
+**Q: How often should I run the downloader?**
+A: Run it as needed to check for setup updates. New setups from your favorite teams are often shared within days.
+
+**Q: Can I run multiple instances?**
+A: Not recommended. Multiple instances could conflict on state updates. Run one at a time.
+
+**Q: Are my setups backed up?**
+A: Yes, if you store setups in a cloud-synced folder like Google Drive or Dropbox.
+
+**Q: Can I use this on macOS or Linux?**
+A: Yes, the tool is cross-platform. The default path uses `~/Documents/iRacing/setups` on all systems.
+
+**Q: What if I interrupt the download?**
+A: The downloader will resume from where it stopped on the next run. State tracking prevents duplicate downloads.
+
+## License
+
+MIT License - See LICENSE file for details
+
+## Contributing
+
+Contributions are welcome! Please:
+
+1. Create a feature branch for your changes
+2. Add tests for new functionality
+3. Ensure linting and formatting pass
+4. Submit a pull request
+
+## Support
+
+For issues, questions, or suggestions, please:
+
+1. Check this README and the Troubleshooting section
+2. Review existing GitHub issues
+3. Create a new issue with details about your problem
+
+Include:
+- Python version (`python --version`)
+- OS and version
+- Steps to reproduce
+- Full error messages/logs
+- Configuration details (without tokens)
