@@ -424,18 +424,19 @@ class TestGoFastProvider:
             with pytest.raises(GoFastDownloadError):
                 await gofast_provider.download_setup(sample_setup_record, temp_dir)
 
-    async def test_download_setup_creates_nested_directories(
+    async def test_download_setup_flattens_structure(
         self, gofast_provider, sample_setup_record, temp_dir
     ):
-        """Test download_setup creates nested directory structure."""
+        """Test download_setup flattens structure keeping only car folder."""
         import io
         import zipfile
 
-        # Create a valid ZIP file with nested structure
+        # Create a valid ZIP file with nested structure (car/track/season/file)
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.writestr(
-                "Ferrari 488 GT3 Evo/Spa-Francorchamps/setup.sto", b"setup file content"
+                "Ferrari 488 GT3 Evo/Spa-Francorchamps/26s1/GO_Race.sto",
+                b"setup file content",
             )
 
         setup_content = zip_buffer.getvalue()
@@ -454,17 +455,25 @@ class TestGoFastProvider:
                 sample_setup_record, temp_dir
             )
 
-            # Verify nested directory was created
+            # Verify one file extracted
             assert len(result_paths) == 1
 
-            # Verify all parent directories were created
+            # Verify car directory was created
             car_dir = temp_dir / "Ferrari 488 GT3 Evo"
             assert car_dir.exists()
             assert car_dir.is_dir()
 
+            # Verify nested track/season directories were NOT created (flattened)
             track_dir = car_dir / "Spa-Francorchamps"
-            assert track_dir.exists()
-            assert track_dir.is_dir()
+            assert not track_dir.exists()
+
+            # Verify file is directly in car folder with standardized name
+            result_path = result_paths[0]
+            assert result_path.parent == car_dir
+            # Filename should be: GoFast_<series>_<season>_<track>_<setup_type>.sto
+            # From sample_setup_record: series=IMSA, season=26S1W8, track=Spa-Francorchamps
+            assert "GoFast" in result_path.name
+            assert result_path.suffix == ".sto"
 
     async def test_close_closes_session(self, gofast_provider):
         """Test close method closes the session."""
@@ -553,3 +562,118 @@ class TestGoFastProviderIntegration:
 
             # 3. Close
             await gofast_provider.close()
+
+
+class TestBuildFilename:
+    """Tests for the _build_filename method."""
+
+    @pytest.fixture
+    def provider(self):
+        """Create a provider instance for testing."""
+        return GoFastProvider(token="Bearer test-token")
+
+    def test_build_filename_all_fields(self, provider, sample_setup_record):
+        """Test filename with all fields present."""
+        filename = provider._build_filename(sample_setup_record, "GO_Race.sto")
+
+        assert filename == "GoFast_IMSA_26S1W8_Spa-Francorchamps_Race.sto"
+        assert not filename.startswith("_")
+        assert not filename.endswith("_.sto")
+        assert "__" not in filename
+
+    def test_build_filename_missing_series(self, provider):
+        """Test filename with missing series."""
+        setup = SetupRecord(
+            id=123,
+            download_name="IR - V1 - Ferrari 296 GT3 - Monza",
+            download_url="https://example.com/setup.zip",
+            creation_date="2024-01-15T10:30:00",
+            updated_date="2024-01-15T10:30:00",
+            ver="26 S1 W8",
+            setup_ver="1.0.0",
+            changelog="",
+            cat="GT3",
+            series="",  # Missing series
+        )
+        filename = provider._build_filename(setup, "setup_Qualifying.sto")
+
+        assert filename == "GoFast_26S1W8_Monza_Qualifying.sto"
+        assert "__" not in filename
+
+    def test_build_filename_missing_track(self, provider):
+        """Test filename with missing track (unparseable download_name)."""
+        setup = SetupRecord(
+            id=123,
+            download_name="Unknown Format",
+            download_url="https://example.com/setup.zip",
+            creation_date="2024-01-15T10:30:00",
+            updated_date="2024-01-15T10:30:00",
+            ver="26 S1 W8",
+            setup_ver="1.0.0",
+            changelog="",
+            cat="GT3",
+            series="IMSA",
+        )
+        filename = provider._build_filename(setup, "setup_eR.sto")
+
+        assert "GoFast" in filename
+        assert "IMSA" in filename
+        assert "__" not in filename
+        assert not filename.startswith("_")
+
+    def test_build_filename_extracts_setup_type(self, provider, sample_setup_record):
+        """Test setup type extraction from original filename."""
+        # Test various setup type formats
+        test_cases = [
+            ("GO 26S1 NextGen Daytona500 Qualifying.sto", "Qualifying"),
+            ("setup_eR.sto", "eR"),
+            ("GO_Race.sto", "Race"),
+            ("setup_sQ.sto", "sQ"),
+            ("GO 26S1 GT3 Spa sWet.sto", "sWet"),
+        ]
+
+        for original_name, expected_type in test_cases:
+            filename = provider._build_filename(sample_setup_record, original_name)
+            assert filename.endswith(f"_{expected_type}.sto"), (
+                f"Expected {expected_type} in {filename} from {original_name}"
+            )
+
+    def test_build_filename_no_double_underscores(self, provider):
+        """Test that double underscores are never present."""
+        setup = SetupRecord(
+            id=123,
+            download_name="Unknown",  # Will result in empty track
+            download_url="https://example.com/setup.zip",
+            creation_date="2024-01-15T10:30:00",
+            updated_date="2024-01-15T10:30:00",
+            ver="",  # Empty season
+            setup_ver="1.0.0",
+            changelog="",
+            cat="",
+            series="",  # Empty series
+        )
+        filename = provider._build_filename(setup, "setup.sto")
+
+        assert "__" not in filename
+        assert not filename.startswith("_")
+        assert not filename.endswith("_.sto")
+
+    def test_build_filename_fallback(self, provider):
+        """Test fallback to setup.sto if all fields are empty."""
+        setup = SetupRecord(
+            id=123,
+            download_name="x",  # Minimal valid value
+            download_url="https://example.com/setup.zip",
+            creation_date="2024-01-15T10:30:00",
+            updated_date="2024-01-15T10:30:00",
+            ver="",
+            setup_ver="1.0.0",
+            changelog="",
+            cat="",
+            series="",
+        )
+        filename = provider._build_filename(setup, ".sto")  # No stem
+
+        # Should at least have GoFast as creator
+        assert "GoFast" in filename
+        assert filename.endswith(".sto")

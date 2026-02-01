@@ -242,18 +242,66 @@ class GoFastProvider(SetupProvider):
             logger.error(msg)
             raise GoFastDownloadError(msg) from e
 
+    def _build_filename(
+        self,
+        setup: SetupRecord,
+        original_filename: str,
+    ) -> str:
+        """Build standardized filename from setup metadata.
+
+        Format: <creator>_<series>_<season>_<track>_<setup_type>.sto
+        Missing sections are excluded. No leading/trailing underscores or double underscores.
+
+        Args:
+            setup: The setup record with metadata
+            original_filename: Original filename from ZIP to extract setup type
+
+        Returns:
+            Standardized filename
+        """
+        # Extract setup type from original filename (last part before .sto)
+        # Examples: "GO 26S1 NextGen Daytona500 Qualifying.sto" -> "Qualifying"
+        #           "setup_eR.sto" -> "eR"
+        original_stem = Path(original_filename).stem
+        # Get the last word/section as setup type
+        parts = original_stem.replace("_", " ").split()
+        setup_type = parts[-1] if parts else ""
+
+        # Build filename components
+        components = [
+            "GoFast",  # creator
+            setup.series if setup.series else "",
+            setup.season if setup.season else "",
+            setup.track.replace(" ", "") if setup.track else "",
+            setup_type,
+        ]
+
+        # Filter out empty components and join with underscores
+        non_empty = [c for c in components if c]
+        filename = "_".join(non_empty)
+
+        # Safety: ensure no double underscores (shouldn't happen with filter above)
+        while "__" in filename:
+            filename = filename.replace("__", "_")
+
+        # Safety: strip leading/trailing underscores
+        filename = filename.strip("_")
+
+        return f"{filename}.sto" if filename else "setup.sto"
+
     def _extract_zip(
         self, content: bytes, output_path: Path, setup: SetupRecord
     ) -> list[Path]:
         """Extract ZIP content to the output path.
 
-        Preserves the folder structure inside the ZIP which contains
-        the iRacing-compatible directory structure.
+        Extracts .sto files from the ZIP, preserving only the car folder
+        (first path component) and flattening the rest. Files are renamed
+        to follow the standard naming convention.
 
         Args:
             content: ZIP file content as bytes
             output_path: Base directory to extract to
-            setup: The setup record (for logging)
+            setup: The setup record with metadata for filename generation
 
         Returns:
             List of paths to extracted .sto files
@@ -286,18 +334,38 @@ class GoFastProvider(SetupProvider):
                         )
                         continue
 
-                    output_file = output_path / relative_path
-                    output_file.parent.mkdir(parents=True, exist_ok=True)
+                    # Only process .sto files
+                    if not relative_path.lower().endswith(".sto"):
+                        logger.debug("Skipping non-.sto file: %s", relative_path)
+                        continue
+
+                    # Extract car folder (first path component) - this must be preserved
+                    path_parts = relative_path.split("/")
+                    car_folder = path_parts[0] if path_parts else ""
+
+                    if not car_folder:
+                        logger.warning("No car folder found in path: %s", relative_path)
+                        continue
+
+                    # Get original filename for setup type extraction
+                    original_filename = path_parts[-1]
+
+                    # Build standardized filename
+                    new_filename = self._build_filename(setup, original_filename)
+
+                    # Output path: <output_path>/<car_folder>/<new_filename>
+                    output_dir = output_path / car_folder
+                    output_file = output_dir / new_filename
+
+                    # Create car directory
+                    output_dir.mkdir(parents=True, exist_ok=True)
 
                     # Extract file
                     with zf.open(zip_info) as src:
                         output_file.write_bytes(src.read())
 
                     logger.debug("Extracted: %s", output_file)
-
-                    # Track .sto files
-                    if output_file.suffix.lower() == ".sto":
-                        extracted_files.append(output_file)
+                    extracted_files.append(output_file)
 
         except zipfile.BadZipFile as e:
             msg = f"Invalid ZIP file for setup {setup.id}: {e}"
