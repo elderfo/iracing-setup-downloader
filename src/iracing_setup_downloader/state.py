@@ -67,14 +67,18 @@ class DownloadState:
     """Manages download state tracking for setup files.
 
     Stores download history in ~/.iracing-setup-downloader/state.json
-    Format: {provider: {id: {updated_date: str, file_path: str}}}
+    Format: {provider: {id: {updated_date: str, file_paths: [str, ...]}}}
+
+    Note: Legacy records with single `file_path` field are supported for
+    backwards compatibility.
 
     Example:
         >>> state = DownloadState()
         >>> state.load()
-        >>> if not state.is_downloaded("gofast", 123, datetime.now(), Path("setup.sto")):
-        ...     # Download the file
-        ...     state.mark_downloaded("gofast", 123, datetime.now(), Path("setup.sto"))
+        >>> if not state.is_downloaded("gofast", 123, datetime.now()):
+        ...     # Download the files
+        ...     extracted_files = [Path("car/setup1.sto"), Path("car/setup2.sto")]
+        ...     state.mark_downloaded("gofast", 123, datetime.now(), extracted_files)
         ...     state.save()
         >>> stats = state.get_stats()
         >>> print(f"Downloaded {stats['gofast']} setups from GoFast")

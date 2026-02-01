@@ -171,8 +171,10 @@ class GoFastProvider(SetupProvider):
     async def download_setup(self, setup: SetupRecord, output_path: Path) -> list[Path]:
         """Download and extract a setup ZIP from GoFast.
 
-        Downloads the setup ZIP file and extracts its contents to the output path.
-        The ZIP contains the proper iRacing folder structure that is preserved.
+        Downloads the setup ZIP file and extracts .sto files to the output path.
+        The car folder (first path component) is preserved for iRacing compatibility,
+        but nested track/season folders are flattened. Files are renamed to the
+        standardized format: <creator>_<series>_<season>_<track>_<setup_type>.sto
 
         Args:
             setup: The SetupRecord to download
@@ -182,7 +184,7 @@ class GoFastProvider(SetupProvider):
             List of paths to the extracted setup files (.sto files)
 
         Raises:
-            GoFastDownloadError: If the download or extraction fails
+            GoFastDownloadError: If the download, extraction fails, or no .sto files found
             GoFastAuthenticationError: If authentication fails during download
         """
         logger.info("Downloading setup: %s", setup.download_name)
@@ -224,6 +226,12 @@ class GoFastProvider(SetupProvider):
 
                 # Extract ZIP file
                 extracted_files = self._extract_zip(content, output_path, setup)
+
+                if not extracted_files:
+                    msg = f"No .sto files found in ZIP for setup {setup.id}"
+                    logger.error(msg)
+                    raise GoFastDownloadError(msg)
+
                 logger.info(
                     "Successfully extracted %d files from setup %s",
                     len(extracted_files),
