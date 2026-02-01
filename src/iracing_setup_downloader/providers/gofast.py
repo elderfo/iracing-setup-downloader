@@ -1,6 +1,8 @@
 """GoFast setup provider implementation."""
 
+import io
 import logging
+import zipfile
 from pathlib import Path
 
 import aiohttp
@@ -128,13 +130,23 @@ class GoFastProvider(SetupProvider):
                     logger.error(msg)
                     raise GoFastAPIError(msg) from e
 
-                if not isinstance(data, list):
-                    msg = f"Expected list response from API, got {type(data).__name__}"
+                # Handle API response structure: {status, msg, data: {records: [...]}}
+                if isinstance(data, dict):
+                    if not data.get("status"):
+                        msg = f"API returned error: {data.get('msg', 'Unknown error')}"
+                        logger.error(msg)
+                        raise GoFastAPIError(msg)
+                    records = data.get("data", {}).get("records", [])
+                elif isinstance(data, list):
+                    # Fallback for direct list response
+                    records = data
+                else:
+                    msg = f"Unexpected response format from API: {type(data).__name__}"
                     logger.error(msg)
                     raise GoFastAPIError(msg)
 
                 setups = []
-                for item in data:
+                for item in records:
                     try:
                         setup_record = SetupRecord(**item)
                         setups.append(setup_record)
@@ -156,38 +168,26 @@ class GoFastProvider(SetupProvider):
             logger.error(msg)
             raise GoFastAPIError(msg) from e
 
-    async def download_setup(self, setup: SetupRecord, output_path: Path) -> Path:
-        """Download a specific setup from GoFast.
+    async def download_setup(self, setup: SetupRecord, output_path: Path) -> list[Path]:
+        """Download and extract a setup ZIP from GoFast.
 
-        Downloads the setup file and saves it to the appropriate location
-        based on the setup's metadata (car, track, etc.).
+        Downloads the setup ZIP file and extracts .sto files to the output path.
+        The car folder (first path component) is preserved for iRacing compatibility,
+        but nested track/season folders are flattened. Files are renamed to the
+        standardized format: <creator>_<series>_<season>_<track>_<setup_type>.sto
 
         Args:
             setup: The SetupRecord to download
-            output_path: Base output directory path
+            output_path: Base output directory path (typically iRacing setups folder)
 
         Returns:
-            Path to the downloaded setup file
+            List of paths to the extracted setup files (.sto files)
 
         Raises:
-            GoFastDownloadError: If the download fails
+            GoFastDownloadError: If the download, extraction fails, or no .sto files found
             GoFastAuthenticationError: If authentication fails during download
         """
         logger.info("Downloading setup: %s", setup.download_name)
-
-        # Create output directory structure: output_path / car / track /
-        output_directory = output_path / setup.get_output_directory()
-        try:
-            output_directory.mkdir(parents=True, exist_ok=True)
-            logger.debug("Created output directory: %s", output_directory)
-        except OSError as e:
-            msg = f"Failed to create output directory {output_directory}: {e}"
-            logger.error(msg)
-            raise GoFastDownloadError(msg) from e
-
-        # Determine output file path
-        output_file = output_directory / setup.get_output_filename()
-        logger.debug("Downloading to: %s", output_file)
 
         try:
             session = await self._get_session()
@@ -216,7 +216,7 @@ class GoFastProvider(SetupProvider):
                     logger.error(msg)
                     raise GoFastDownloadError(msg)
 
-                # Download file content
+                # Download ZIP content
                 try:
                     content = await response.read()
                 except aiohttp.ClientError as e:
@@ -224,20 +224,20 @@ class GoFastProvider(SetupProvider):
                     logger.error(msg)
                     raise GoFastDownloadError(msg) from e
 
-                # Write to file
-                try:
-                    output_file.write_bytes(content)
-                    logger.info(
-                        "Successfully downloaded setup to %s (%d bytes)",
-                        output_file,
-                        len(content),
-                    )
-                except OSError as e:
-                    msg = f"Failed to write setup file to {output_file}: {e}"
-                    logger.error(msg)
-                    raise GoFastDownloadError(msg) from e
+                # Extract ZIP file
+                extracted_files = self._extract_zip(content, output_path, setup)
 
-                return output_file
+                if not extracted_files:
+                    msg = f"No .sto files found in ZIP for setup {setup.id}"
+                    logger.error(msg)
+                    raise GoFastDownloadError(msg)
+
+                logger.info(
+                    "Successfully extracted %d files from setup %s",
+                    len(extracted_files),
+                    setup.download_name,
+                )
+                return extracted_files
 
         except (GoFastAuthenticationError, GoFastDownloadError):
             raise
@@ -249,6 +249,142 @@ class GoFastProvider(SetupProvider):
             msg = f"Unexpected error while downloading setup: {e}"
             logger.error(msg)
             raise GoFastDownloadError(msg) from e
+
+    def _build_filename(
+        self,
+        setup: SetupRecord,
+        original_filename: str,
+    ) -> str:
+        """Build standardized filename from setup metadata.
+
+        Format: <creator>_<series>_<season>_<track>_<setup_type>.sto
+        Missing sections are excluded. No leading/trailing underscores or double underscores.
+
+        Args:
+            setup: The setup record with metadata
+            original_filename: Original filename from ZIP to extract setup type
+
+        Returns:
+            Standardized filename
+        """
+        # Extract setup type from original filename (last part before .sto)
+        # Examples: "GO 26S1 NextGen Daytona500 Qualifying.sto" -> "Qualifying"
+        #           "setup_eR.sto" -> "eR"
+        original_stem = Path(original_filename).stem
+        # Get the last word/section as setup type
+        parts = original_stem.replace("_", " ").split()
+        setup_type = parts[-1] if parts else ""
+
+        # Build filename components
+        components = [
+            "GoFast",  # creator
+            setup.series if setup.series else "",
+            setup.season if setup.season else "",
+            setup.track.replace(" ", "") if setup.track else "",
+            setup_type,
+        ]
+
+        # Filter out empty components and join with underscores
+        non_empty = [c for c in components if c]
+        filename = "_".join(non_empty)
+
+        # Safety: ensure no double underscores (shouldn't happen with filter above)
+        while "__" in filename:
+            filename = filename.replace("__", "_")
+
+        # Safety: strip leading/trailing underscores
+        filename = filename.strip("_")
+
+        return f"{filename}.sto" if filename else "setup.sto"
+
+    def _extract_zip(
+        self, content: bytes, output_path: Path, setup: SetupRecord
+    ) -> list[Path]:
+        """Extract ZIP content to the output path.
+
+        Extracts .sto files from the ZIP, preserving only the car folder
+        (first path component) and flattening the rest. Files are renamed
+        to follow the standard naming convention.
+
+        Args:
+            content: ZIP file content as bytes
+            output_path: Base directory to extract to
+            setup: The setup record with metadata for filename generation
+
+        Returns:
+            List of paths to extracted .sto files
+
+        Raises:
+            GoFastDownloadError: If extraction fails
+        """
+        extracted_files: list[Path] = []
+
+        try:
+            with zipfile.ZipFile(io.BytesIO(content)) as zf:
+                # Check for bad ZIP file
+                if zf.testzip() is not None:
+                    msg = f"Corrupted ZIP file for setup {setup.id}"
+                    logger.error(msg)
+                    raise GoFastDownloadError(msg)
+
+                for zip_info in zf.infolist():
+                    # Skip directories
+                    if zip_info.is_dir():
+                        continue
+
+                    # Normalize path separators (Windows -> Unix)
+                    relative_path = zip_info.filename.replace("\\", "/")
+
+                    # Security: prevent path traversal
+                    if ".." in relative_path or relative_path.startswith("/"):
+                        logger.warning(
+                            "Skipping potentially unsafe path: %s", relative_path
+                        )
+                        continue
+
+                    # Only process .sto files
+                    if not relative_path.lower().endswith(".sto"):
+                        logger.debug("Skipping non-.sto file: %s", relative_path)
+                        continue
+
+                    # Extract car folder (first path component) - this must be preserved
+                    path_parts = relative_path.split("/")
+                    car_folder = path_parts[0] if path_parts else ""
+
+                    if not car_folder:
+                        logger.warning("No car folder found in path: %s", relative_path)
+                        continue
+
+                    # Get original filename for setup type extraction
+                    original_filename = path_parts[-1]
+
+                    # Build standardized filename
+                    new_filename = self._build_filename(setup, original_filename)
+
+                    # Output path: <output_path>/<car_folder>/<new_filename>
+                    output_dir = output_path / car_folder
+                    output_file = output_dir / new_filename
+
+                    # Create car directory
+                    output_dir.mkdir(parents=True, exist_ok=True)
+
+                    # Extract file
+                    with zf.open(zip_info) as src:
+                        output_file.write_bytes(src.read())
+
+                    logger.debug("Extracted: %s", output_file)
+                    extracted_files.append(output_file)
+
+        except zipfile.BadZipFile as e:
+            msg = f"Invalid ZIP file for setup {setup.id}: {e}"
+            logger.error(msg)
+            raise GoFastDownloadError(msg) from e
+        except OSError as e:
+            msg = f"Failed to extract setup {setup.id}: {e}"
+            logger.error(msg)
+            raise GoFastDownloadError(msg) from e
+
+        return extracted_files
 
     async def close(self) -> None:
         """Clean up provider resources.

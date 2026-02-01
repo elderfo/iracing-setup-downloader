@@ -12,15 +12,22 @@ logger = logging.getLogger(__name__)
 
 
 class DownloadRecord(BaseModel):
-    """Record of a downloaded setup file.
+    """Record of a downloaded setup.
 
     Attributes:
         updated_date: ISO format datetime string when setup was last updated
-        file_path: Absolute path to the downloaded file
+        file_paths: List of absolute paths to the extracted .sto files
     """
 
     updated_date: str = Field(..., description="ISO format datetime of last update")
-    file_path: str = Field(..., description="Absolute path to downloaded file")
+    file_paths: list[str] = Field(
+        default_factory=list, description="Absolute paths to extracted .sto files"
+    )
+
+    # Legacy field for backwards compatibility with old state files
+    file_path: str | None = Field(
+        default=None, description="Deprecated: single file path for old records"
+    )
 
     @field_validator("updated_date")
     @classmethod
@@ -43,19 +50,35 @@ class DownloadRecord(BaseModel):
             raise ValueError(msg) from e
         return v
 
+    def get_all_paths(self) -> list[str]:
+        """Get all file paths, handling legacy single-path records.
+
+        Returns:
+            List of file paths (may be empty for legacy records)
+        """
+        if self.file_paths:
+            return self.file_paths
+        if self.file_path:
+            return [self.file_path]
+        return []
+
 
 class DownloadState:
     """Manages download state tracking for setup files.
 
     Stores download history in ~/.iracing-setup-downloader/state.json
-    Format: {provider: {id: {updated_date: str, file_path: str}}}
+    Format: {provider: {id: {updated_date: str, file_paths: [str, ...]}}}
+
+    Note: Legacy records with single `file_path` field are supported for
+    backwards compatibility.
 
     Example:
         >>> state = DownloadState()
         >>> state.load()
-        >>> if not state.is_downloaded("gofast", 123, datetime.now(), Path("setup.sto")):
-        ...     # Download the file
-        ...     state.mark_downloaded("gofast", 123, datetime.now(), Path("setup.sto"))
+        >>> if not state.is_downloaded("gofast", 123, datetime.now()):
+        ...     # Download the files
+        ...     extracted_files = [Path("car/setup1.sto"), Path("car/setup2.sto")]
+        ...     state.mark_downloaded("gofast", 123, datetime.now(), extracted_files)
         ...     state.save()
         >>> stats = state.get_stats()
         >>> print(f"Downloaded {stats['gofast']} setups from GoFast")
@@ -166,20 +189,19 @@ class DownloadState:
             raise
 
     def is_downloaded(
-        self, provider: str, setup_id: int, updated_date: datetime, file_path: Path
+        self, provider: str, setup_id: int, updated_date: datetime
     ) -> bool:
         """Check if a setup has been downloaded and is still valid.
 
         A setup is considered downloaded if:
         1. It exists in the state for this provider and ID
-        2. The file exists at the expected path
+        2. At least one extracted file still exists
         3. The updated_date matches the stored value (setup hasn't changed)
 
         Args:
             provider: Name of the setup provider (e.g., "gofast")
             setup_id: Unique identifier for the setup
             updated_date: When the setup was last updated
-            file_path: Expected path to the downloaded file
 
         Returns:
             True if the setup is already downloaded and up to date,
@@ -204,14 +226,7 @@ class DownloadState:
 
         record = self._state[provider][id_str]
 
-        # Check if file exists
-        if not file_path.exists():
-            logger.info(
-                f"Setup {provider}/{id_str} in state but file missing: {file_path}"
-            )
-            return False
-
-        # Check if updated_date matches
+        # Check if updated_date matches first (cheaper check)
         if record.updated_date != updated_str:
             logger.info(
                 f"Setup {provider}/{id_str} has been updated "
@@ -219,11 +234,26 @@ class DownloadState:
             )
             return False
 
+        # Check if at least one extracted file still exists
+        file_paths = record.get_all_paths()
+        if not file_paths:
+            logger.info(f"Setup {provider}/{id_str} has no recorded file paths")
+            return False
+
+        files_exist = any(Path(fp).exists() for fp in file_paths)
+        if not files_exist:
+            logger.info(f"Setup {provider}/{id_str} in state but all files missing")
+            return False
+
         logger.debug(f"Setup {provider}/{id_str} is up to date")
         return True
 
     def mark_downloaded(
-        self, provider: str, setup_id: int, updated_date: datetime, file_path: Path
+        self,
+        provider: str,
+        setup_id: int,
+        updated_date: datetime,
+        file_paths: list[Path],
     ) -> None:
         """Record a successful download.
 
@@ -231,7 +261,7 @@ class DownloadState:
             provider: Name of the setup provider (e.g., "gofast")
             setup_id: Unique identifier for the setup
             updated_date: When the setup was last updated
-            file_path: Path where the file was downloaded
+            file_paths: List of paths to the extracted .sto files
 
         Raises:
             ValueError: If state hasn't been loaded yet
@@ -248,13 +278,15 @@ class DownloadState:
         if provider not in self._state:
             self._state[provider] = {}
 
-        # Store the download record
+        # Store the download record with all file paths
         self._state[provider][id_str] = DownloadRecord(
             updated_date=updated_str,
-            file_path=str(file_path.absolute()),
+            file_paths=[str(fp.absolute()) for fp in file_paths],
         )
 
-        logger.info(f"Marked {provider}/{id_str} as downloaded to {file_path}")
+        logger.info(
+            f"Marked {provider}/{id_str} as downloaded: {len(file_paths)} files"
+        )
 
         # Auto-save if enabled
         if self._auto_save:
