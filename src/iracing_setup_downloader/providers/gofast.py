@@ -153,13 +153,15 @@ class GoFastProvider(SetupProvider):
                 setups = []
                 skipped_other_sims = 0
                 for item in records:
+                    # Check prefix on raw dict first to avoid expensive parsing
+                    download_name = item.get("download_name", "")
+                    if not download_name.startswith(self.IRACING_PREFIX):
+                        skipped_other_sims += 1
+                        continue
+
                     try:
                         setup_record = SetupRecord(**item)
-                        # Only include iRacing setups (download_name starts with "IR - ")
-                        if setup_record.download_name.startswith(self.IRACING_PREFIX):
-                            setups.append(setup_record)
-                        else:
-                            skipped_other_sims += 1
+                        setups.append(setup_record)
                     except Exception as e:
                         logger.warning("Failed to parse setup record: %s. Skipping.", e)
                         continue
