@@ -1,7 +1,9 @@
 """Tests for CLI commands."""
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from typer.testing import CliRunner
 
 from iracing_setup_downloader.cli import app
@@ -128,3 +130,137 @@ def test_list_gofast_empty(mock_provider_class):
 
     # Verify provider was closed
     mock_provider.close.assert_called_once()
+
+
+def test_organize_help():
+    """Test organize command help."""
+    result = runner.invoke(app, ["organize", "--help"])
+    assert result.exit_code == 0
+    assert "Organize existing setup files" in result.stdout
+
+
+def test_organize_nonexistent_directory():
+    """Test organize with nonexistent directory."""
+    result = runner.invoke(app, ["organize", "/nonexistent/path"])
+    # Typer validates this and returns exit code 2
+    assert result.exit_code == 2
+
+
+@pytest.fixture
+def sample_tracks_json(tmp_path):
+    """Create a sample tracks.json for testing."""
+    tracks_data = {
+        "type": "tracks",
+        "data": [
+            {
+                "track_id": 1,
+                "track_name": "Spa-Francorchamps - Grand Prix Pits",
+                "track_dirpath": "spa\\gp",
+                "config_name": "Grand Prix Pits",
+                "category": "road",
+                "retired": False,
+                "is_oval": False,
+                "is_dirt": False,
+            },
+        ],
+    }
+    tracks_file = tmp_path / "tracks.json"
+    with open(tracks_file, "w") as f:
+        json.dump(tracks_data, f)
+    return tracks_file
+
+
+def test_organize_dry_run(tmp_path, sample_tracks_json):
+    """Test organize with dry run."""
+    # Create test setup file
+    car_dir = tmp_path / "ferrari296gt3"
+    car_dir.mkdir()
+    setup_file = car_dir / "GoFast_IMSA_26S1W8_Spa_Race.sto"
+    setup_file.write_text("setup content")
+
+    # Mock get_settings to use our tracks file
+    with patch("iracing_setup_downloader.cli.get_settings") as mock_settings:
+        mock_settings.return_value.tracks_data_path = sample_tracks_json
+
+        result = runner.invoke(app, ["organize", str(tmp_path), "--dry-run"])
+
+    assert result.exit_code == 0
+    assert "Organization Results (Dry Run)" in result.stdout
+    # File should still be in original location
+    assert setup_file.exists()
+
+
+def test_organize_empty_directory(tmp_path, sample_tracks_json):
+    """Test organize with empty directory."""
+    with patch("iracing_setup_downloader.cli.get_settings") as mock_settings:
+        mock_settings.return_value.tracks_data_path = sample_tracks_json
+
+        result = runner.invoke(app, ["organize", str(tmp_path), "--dry-run"])
+
+    assert result.exit_code == 0
+    assert "Total Files:" in result.stdout
+    assert "0" in result.stdout
+
+
+def test_organize_with_output(tmp_path, sample_tracks_json):
+    """Test organize with output directory."""
+    # Create source directory with setup
+    source_dir = tmp_path / "source"
+    car_dir = source_dir / "ferrari296gt3"
+    car_dir.mkdir(parents=True)
+    setup_file = car_dir / "GoFast_IMSA_26S1W8_Spa_Race.sto"
+    setup_file.write_text("setup content")
+
+    # Create output directory
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+
+    with patch("iracing_setup_downloader.cli.get_settings") as mock_settings:
+        mock_settings.return_value.tracks_data_path = sample_tracks_json
+
+        result = runner.invoke(
+            app,
+            ["organize", str(source_dir), "--output", str(output_dir), "--dry-run"],
+        )
+
+    assert result.exit_code == 0
+    assert "Organization Results (Dry Run)" in result.stdout
+
+
+def test_organize_with_category_hint(tmp_path, sample_tracks_json):
+    """Test organize with category hint."""
+    car_dir = tmp_path / "ferrari296gt3"
+    car_dir.mkdir()
+    setup_file = car_dir / "GoFast_IMSA_26S1W8_Spa_Race.sto"
+    setup_file.write_text("setup content")
+
+    with patch("iracing_setup_downloader.cli.get_settings") as mock_settings:
+        mock_settings.return_value.tracks_data_path = sample_tracks_json
+
+        result = runner.invoke(
+            app,
+            ["organize", str(tmp_path), "--category", "GT3", "--dry-run"],
+        )
+
+    assert result.exit_code == 0
+    assert "GT3" in result.stdout  # Category should be displayed
+
+
+def test_organize_verbose(tmp_path, sample_tracks_json):
+    """Test organize with verbose output."""
+    car_dir = tmp_path / "ferrari296gt3"
+    car_dir.mkdir()
+    setup_file = car_dir / "GoFast_IMSA_26S1W8_Spa_Race.sto"
+    setup_file.write_text("setup content")
+
+    with patch("iracing_setup_downloader.cli.get_settings") as mock_settings:
+        mock_settings.return_value.tracks_data_path = sample_tracks_json
+
+        result = runner.invoke(
+            app,
+            ["organize", str(tmp_path), "--dry-run", "--verbose"],
+        )
+
+    assert result.exit_code == 0
+    # Verbose should show file movements
+    assert "Would move" in result.stdout or "Organized:" in result.stdout

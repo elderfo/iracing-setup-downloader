@@ -1,4 +1,5 @@
 {
+  "type": "tracks",
   "data": [
     {
       "ai_enabled": false,
@@ -29848,6 +29849,5 @@
         }
       ]
     }
-  ],
-  "type": "tracks"
+  ]
 }

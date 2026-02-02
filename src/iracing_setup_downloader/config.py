@@ -61,6 +61,10 @@ class Settings(BaseSettings):
         ge=0,
         description="Maximum retry attempts for failed downloads",
     )
+    tracks_data_path: Path | None = Field(
+        default=None,
+        description="Custom path to tracks.json. If None, uses bundled data.",
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",

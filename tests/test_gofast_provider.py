@@ -1,5 +1,6 @@
 """Tests for the GoFast provider."""
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
@@ -12,6 +13,7 @@ from iracing_setup_downloader.providers.gofast import (
     GoFastDownloadError,
     GoFastProvider,
 )
+from iracing_setup_downloader.track_matcher import TrackMatcher, TrackMatchResult
 
 
 @pytest.fixture
@@ -755,3 +757,280 @@ class TestBuildFilename:
         # Should at least have GoFast as creator
         assert "GoFast" in filename
         assert filename.endswith(".sto")
+
+
+class TestGoFastProviderTrackOrganization:
+    """Tests for track-based folder organization."""
+
+    @pytest.fixture
+    def sample_tracks_data(self):
+        """Sample tracks data for testing."""
+        return {
+            "type": "tracks",
+            "data": [
+                {
+                    "track_id": 1,
+                    "track_name": "Spa-Francorchamps - Grand Prix Pits",
+                    "track_dirpath": "spa\\gp",
+                    "config_name": "Grand Prix Pits",
+                    "category": "road",
+                    "retired": False,
+                    "is_oval": False,
+                    "is_dirt": False,
+                },
+                {
+                    "track_id": 2,
+                    "track_name": "Daytona International Speedway - Oval",
+                    "track_dirpath": "daytonaint\\oval",
+                    "config_name": "Oval",
+                    "category": "oval",
+                    "retired": False,
+                    "is_oval": True,
+                    "is_dirt": False,
+                },
+                {
+                    "track_id": 3,
+                    "track_name": "Daytona International Speedway - Road Course",
+                    "track_dirpath": "daytonaint\\road",
+                    "config_name": "Road Course",
+                    "category": "road",
+                    "retired": False,
+                    "is_oval": False,
+                    "is_dirt": False,
+                },
+            ],
+        }
+
+    @pytest.fixture
+    def track_matcher(self, sample_tracks_data, tmp_path):
+        """Create a TrackMatcher with sample data."""
+        tracks_file = tmp_path / "tracks.json"
+        with open(tracks_file, "w") as f:
+            json.dump(sample_tracks_data, f)
+
+        matcher = TrackMatcher(tracks_data_path=tracks_file)
+        matcher.load()
+        return matcher
+
+    @pytest.fixture
+    def provider_with_matcher(self, gofast_token, track_matcher):
+        """Create a provider with track matcher."""
+        return GoFastProvider(token=gofast_token, track_matcher=track_matcher)
+
+    def test_provider_accepts_track_matcher(self, gofast_token, track_matcher):
+        """Test provider accepts track_matcher parameter."""
+        provider = GoFastProvider(token=gofast_token, track_matcher=track_matcher)
+
+        assert provider._track_matcher is track_matcher
+
+    def test_provider_accepts_none_track_matcher(self, gofast_token):
+        """Test provider works without track_matcher."""
+        provider = GoFastProvider(token=gofast_token)
+
+        assert provider._track_matcher is None
+
+    async def test_download_with_track_matcher_creates_track_subdir(
+        self, provider_with_matcher, sample_setup_record, temp_dir
+    ):
+        """Test download creates track subdirectory when matcher matches."""
+        import io
+        import zipfile
+
+        # Create a valid ZIP file with a .sto file
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(
+                "Ferrari 488 GT3 Evo/Spa-Francorchamps/setup.sto", b"setup content"
+            )
+
+        setup_content = zip_buffer.getvalue()
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.read = AsyncMock(return_value=setup_content)
+
+        with patch.object(
+            provider_with_matcher, "_get_session", new_callable=AsyncMock
+        ) as mock_get_session:
+            mock_session = MagicMock()
+            mock_session.get.return_value.__aenter__.return_value = mock_response
+            mock_get_session.return_value = mock_session
+
+            result_paths = await provider_with_matcher.download_setup(
+                sample_setup_record, temp_dir
+            )
+
+            assert len(result_paths) == 1
+            result_path = result_paths[0]
+
+            # Verify track subdirectory was created
+            # Path should be: <temp_dir>/<car>/<track_dirpath>/<filename>
+            # track_dirpath for Spa is "spa\gp" which becomes "spa/gp" on Unix
+            assert result_path.exists()
+
+            # Check that the track subdirectory is in the path
+            relative_path = result_path.relative_to(temp_dir)
+            path_parts = relative_path.parts
+
+            # Should have: car_folder, track_dir, track_config, filename
+            assert len(path_parts) >= 3  # At minimum: car, spa, gp, filename
+            assert path_parts[0] == "Ferrari 488 GT3 Evo"  # Car folder
+            # Track subdir should be spa/gp (or spa\gp on Windows)
+            assert "spa" in str(relative_path).lower()
+            assert "gp" in str(relative_path).lower()
+
+    async def test_download_without_track_matcher_uses_flat_structure(
+        self, gofast_provider, sample_setup_record, temp_dir
+    ):
+        """Test download uses flat structure when no track matcher."""
+        import io
+        import zipfile
+
+        # Create a valid ZIP file with a .sto file
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(
+                "Ferrari 488 GT3 Evo/Spa-Francorchamps/setup.sto", b"setup content"
+            )
+
+        setup_content = zip_buffer.getvalue()
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.read = AsyncMock(return_value=setup_content)
+
+        with patch.object(
+            gofast_provider, "_get_session", new_callable=AsyncMock
+        ) as mock_get_session:
+            mock_session = MagicMock()
+            mock_session.get.return_value.__aenter__.return_value = mock_response
+            mock_get_session.return_value = mock_session
+
+            result_paths = await gofast_provider.download_setup(
+                sample_setup_record, temp_dir
+            )
+
+            assert len(result_paths) == 1
+            result_path = result_paths[0]
+
+            # Verify flat structure (no track subdir)
+            # Path should be: <temp_dir>/<car>/<filename>
+            assert result_path.exists()
+            relative_path = result_path.relative_to(temp_dir)
+            path_parts = relative_path.parts
+
+            # Should have only: car_folder, filename (no track subdirs)
+            assert len(path_parts) == 2
+            assert path_parts[0] == "Ferrari 488 GT3 Evo"
+
+    async def test_download_with_unmatched_track_uses_flat_structure(
+        self, gofast_token, temp_dir
+    ):
+        """Test download falls back to flat structure when track doesn't match."""
+        import io
+        import zipfile
+
+        # Create a mock track matcher that returns no match
+        mock_matcher = MagicMock(spec=TrackMatcher)
+        mock_matcher.match.return_value = TrackMatchResult()  # No match
+
+        provider = GoFastProvider(token=gofast_token, track_matcher=mock_matcher)
+
+        # Create setup with unknown track
+        setup = SetupRecord(
+            id=999,
+            download_name="IR - V1 - Test Car - Unknown Track XYZ",
+            download_url="https://example.com/setup.zip",
+            creation_date="2024-01-15T10:30:00",
+            updated_date="2024-01-15T10:30:00",
+            ver="26 S1 W8",
+            setup_ver="1.0.0",
+            changelog="",
+            cat="GT3",
+            series="IMSA",
+        )
+
+        # Create a valid ZIP file
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("Test Car/setup.sto", b"setup content")
+
+        setup_content = zip_buffer.getvalue()
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.read = AsyncMock(return_value=setup_content)
+
+        with patch.object(
+            provider, "_get_session", new_callable=AsyncMock
+        ) as mock_get_session:
+            mock_session = MagicMock()
+            mock_session.get.return_value.__aenter__.return_value = mock_response
+            mock_get_session.return_value = mock_session
+
+            result_paths = await provider.download_setup(setup, temp_dir)
+
+            assert len(result_paths) == 1
+            result_path = result_paths[0]
+
+            # Verify flat structure
+            relative_path = result_path.relative_to(temp_dir)
+            path_parts = relative_path.parts
+            assert len(path_parts) == 2  # car, filename only
+
+            # Verify matcher was called with track name and category hint
+            mock_matcher.match.assert_called_once_with(
+                "Unknown Track XYZ", category_hint="GT3"
+            )
+
+    async def test_download_passes_category_hint_to_matcher(
+        self, gofast_token, temp_dir
+    ):
+        """Test download passes category hint to track matcher for disambiguation."""
+        import io
+        import zipfile
+
+        # Create a mock track matcher
+        mock_matcher = MagicMock(spec=TrackMatcher)
+        mock_matcher.match.return_value = TrackMatchResult(
+            track_dirpath="daytonaint\\oval",
+            confidence=0.9,
+            ambiguous=False,
+        )
+
+        provider = GoFastProvider(token=gofast_token, track_matcher=mock_matcher)
+
+        # Create setup with NASCAR category (should prefer oval)
+        setup = SetupRecord(
+            id=999,
+            download_name="IR - V1 - NASCAR Next Gen - Daytona",
+            download_url="https://example.com/setup.zip",
+            creation_date="2024-01-15T10:30:00",
+            updated_date="2024-01-15T10:30:00",
+            ver="26 S1 W8",
+            setup_ver="1.0.0",
+            changelog="",
+            cat="NASCAR",
+            series="Cup",
+        )
+
+        # Create a valid ZIP file
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("NASCAR Next Gen/setup.sto", b"setup content")
+
+        setup_content = zip_buffer.getvalue()
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.read = AsyncMock(return_value=setup_content)
+
+        with patch.object(
+            provider, "_get_session", new_callable=AsyncMock
+        ) as mock_get_session:
+            mock_session = MagicMock()
+            mock_session.get.return_value.__aenter__.return_value = mock_response
+            mock_get_session.return_value = mock_session
+
+            await provider.download_setup(setup, temp_dir)
+
+            # Verify matcher was called with NASCAR category hint
+            mock_matcher.match.assert_called_once_with(
+                "Daytona", category_hint="NASCAR"
+            )
