@@ -1,14 +1,21 @@
 """GoFast setup provider implementation."""
 
+from __future__ import annotations
+
 import io
 import logging
+import os
 import zipfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import aiohttp
 
 from iracing_setup_downloader.models import SetupRecord
 from iracing_setup_downloader.providers.base import SetupProvider
+
+if TYPE_CHECKING:
+    from iracing_setup_downloader.track_matcher import TrackMatcher
 
 logger = logging.getLogger(__name__)
 
@@ -48,13 +55,15 @@ class GoFastProvider(SetupProvider):
     REQUEST_TIMEOUT = 30.0
     IRACING_PREFIX = "IR - "
 
-    def __init__(self, token: str) -> None:
+    def __init__(self, token: str, track_matcher: TrackMatcher | None = None) -> None:
         """Initialize the GoFast provider.
 
         Args:
             token: GoFast API bearer token (should include "Bearer " prefix)
+            track_matcher: Optional TrackMatcher for track-based folder organization
         """
         self._token = token
+        self._track_matcher = track_matcher
         self._session: aiohttp.ClientSession | None = None
         logger.info("GoFast provider initialized")
 
@@ -319,9 +328,10 @@ class GoFastProvider(SetupProvider):
     ) -> list[Path]:
         """Extract ZIP content to the output path.
 
-        Extracts .sto files from the ZIP, preserving only the car folder
-        (first path component) and flattening the rest. Files are renamed
-        to follow the standard naming convention.
+        Extracts .sto files from the ZIP, preserving the car folder
+        (first path component) and optionally organizing by track folder
+        when a TrackMatcher is available. Files are renamed to follow
+        the standard naming convention.
 
         Args:
             content: ZIP file content as bytes
@@ -335,6 +345,28 @@ class GoFastProvider(SetupProvider):
             GoFastDownloadError: If extraction fails
         """
         extracted_files: list[Path] = []
+
+        # Resolve track subdirectory if track matcher is available
+        track_subdir = ""
+        if self._track_matcher:
+            match_result = self._track_matcher.match(
+                setup.track, category_hint=setup.cat
+            )
+            if match_result.track_dirpath:
+                # Convert Windows path separators to OS-native
+                track_subdir = match_result.track_dirpath.replace("\\", os.sep)
+                logger.debug(
+                    "Matched track '%s' to path '%s' (confidence: %.2f%s)",
+                    setup.track,
+                    track_subdir,
+                    match_result.confidence,
+                    ", ambiguous" if match_result.ambiguous else "",
+                )
+            else:
+                logger.warning(
+                    "Could not match track '%s' to iRacing path, using flat structure",
+                    setup.track,
+                )
 
         try:
             with zipfile.ZipFile(io.BytesIO(content)) as zf:
@@ -378,11 +410,14 @@ class GoFastProvider(SetupProvider):
                     # Build standardized filename
                     new_filename = self._build_filename(setup, original_filename)
 
-                    # Output path: <output_path>/<car_folder>/<new_filename>
+                    # Build output directory: <output_path>/<car_folder>/[<track_subdir>/]
                     output_dir = output_path / car_folder
+                    if track_subdir:
+                        output_dir = output_dir / track_subdir
+
                     output_file = output_dir / new_filename
 
-                    # Create car directory
+                    # Create output directory
                     output_dir.mkdir(parents=True, exist_ok=True)
 
                     # Extract file
