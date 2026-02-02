@@ -7,7 +7,8 @@ A fast, efficient CLI tool for downloading iRacing setups from GoFast with intel
 - **Asynchronous Concurrent Downloads** - Download multiple setups in parallel with configurable concurrency limits (1-20)
 - **Smart Rate Limiting** - Configurable random delays between requests to avoid server overload
 - **Incremental Updates** - Tracks downloaded setups and skips files that haven't changed
-- **Organized Structure** - Automatically creates folders by car name and track for easy browsing
+- **iRacing-Native Folder Structure** - Automatically organizes setups into iRacing's track folder paths so they appear correctly in-game
+- **Intelligent Track Matching** - Fuzzy matching with category awareness (GT3 prefers road configs, NASCAR prefers oval configs)
 - **Rich Progress Bars** - Visual feedback with download speed, count, and estimated time remaining
 - **Retry Logic** - Automatic exponential backoff retry strategy for failed downloads
 - **Robust Error Handling** - Detailed error reporting for troubleshooting
@@ -84,6 +85,7 @@ MAX_RETRIES=3          # Retry attempts for failed downloads
 | `MAX_DELAY` | 1.5 | >= MIN_DELAY | Maximum delay between downloads (seconds) |
 | `TIMEOUT` | 30 | >= 1 | HTTP request timeout (seconds) |
 | `MAX_RETRIES` | 3 | >= 0 | Failed download retry attempts |
+| `TRACKS_DATA_PATH` | (bundled) | - | Custom path to tracks.json for track matching |
 
 ### Getting Your GoFast Token
 
@@ -153,33 +155,76 @@ Also supports:
 poetry run iracing-setup-downloader download gofast --output ~/Downloads/iRacing
 ```
 
+### Organize Existing Setups
+
+If you have existing setup files that aren't organized into iRacing's folder structure, you can reorganize them:
+
+```bash
+# Preview what would be organized (dry run)
+poetry run iracing-setup-downloader organize ~/Documents/iRacing/setups --dry-run
+
+# Organize files in place (moves files)
+poetry run iracing-setup-downloader organize ~/Documents/iRacing/setups
+
+# Organize to a different directory
+poetry run iracing-setup-downloader organize ~/old-setups --output ~/Documents/iRacing/setups
+
+# Copy files instead of moving
+poetry run iracing-setup-downloader organize ~/setups --copy
+
+# Provide category hint for better track matching (e.g., GT3, NASCAR)
+poetry run iracing-setup-downloader organize ~/gt3-setups --category GT3
+```
+
+The organizer:
+- Scans for `.sto` files recursively
+- Extracts track information from filenames (supports GoFast naming format)
+- Uses intelligent fuzzy matching to find the correct iRacing folder path
+- Preserves car folder structure
+- Cleans up empty directories after moving files
+- Skips files already in the correct location
+
 ### View Help
 
 ```bash
 poetry run iracing-setup-downloader --help
 poetry run iracing-setup-downloader download gofast --help
 poetry run iracing-setup-downloader list gofast --help
+poetry run iracing-setup-downloader organize --help
 ```
 
 ## Output Structure
 
-Downloaded setups are organized by car and track:
+Downloaded setups are organized by car and track, matching iRacing's native folder structure:
 
 ```
 ~/Documents/iRacing/setups/
-├── Ferrari 296 GT3/
-│   ├── Jerez Moto/
-│   │   ├── GoFast_IMSA_26S1W8_JerezMoto_267624.sto
-│   │   └── GoFast_IMSA_26S1W9_JerezMoto_268451.sto
-│   └── Le Mans/
-│       └── GoFast_IMSA_26S1W8_LeMans_267625.sto
-├── Porsche 911 GT3 R/
-│   └── Road Atlanta/
-│       └── GoFast_GT_WORLD_26S1W8_RoadAtlanta_267626.sto
-└── McLaren 720S GT3/
-    └── Spa/
-        └── GoFast_IMSA_26S1W8_Spa_267627.sto
+├── ferrari296gt3/
+│   ├── jerez/                           # Track folder matching iRacing
+│   │   └── moto/                        # Track configuration subfolder
+│   │       └── GoFast_IMSA_26S1W8_JerezMoto_Race.sto
+│   └── lemans24/
+│       └── full/
+│           └── GoFast_IMSA_26S1W8_LeMans_Race.sto
+├── porsche911gt3r/
+│   └── roadatlanta/
+│       └── full/
+│           └── GoFast_GT_WORLD_26S1W8_RoadAtlanta_Qualifying.sto
+└── mclaren720sgt3/
+    └── spa/
+        └── gp/
+            └── GoFast_IMSA_26S1W8_Spa_Race.sto
 ```
+
+### Track-Based Organization
+
+The downloader automatically matches provider track names to iRacing's internal folder structure using intelligent fuzzy matching. This means:
+
+- **Setups appear in the correct location** - iRacing will find them automatically
+- **Category-aware disambiguation** - GT3 setups go to road course configs, NASCAR setups go to oval configs
+- **Handles variations** - "Spa-Francorchamps", "Spa", "SPA" all match correctly
+
+If a track cannot be matched (rare), the setup falls back to a flat structure directly in the car folder.
 
 ### Filename Format
 
@@ -251,6 +296,10 @@ iracing-setup-downloader/
 │   ├── models.py                # Data models
 │   ├── state.py                 # Download state tracking
 │   ├── downloader.py            # Download orchestration
+│   ├── organizer.py             # Existing file reorganization
+│   ├── track_matcher.py         # Track name to iRacing path matching
+│   ├── data/
+│   │   └── tracks.json          # Bundled iRacing track data
 │   └── providers/
 │       ├── base.py              # Provider interface
 │       ├── __init__.py
@@ -268,6 +317,18 @@ iracing-setup-downloader/
 **Configuration** (`config.py`) - Settings management using Pydantic
 
 **Models** (`models.py`) - Data structures for setups and API responses
+
+**Track Matcher** (`track_matcher.py`) - Track name resolution
+- Matches provider track names to iRacing folder paths
+- Tiered matching: exact, substring, fuzzy (SequenceMatcher)
+- Category-aware disambiguation (GT3 vs NASCAR)
+- Prefers non-retired track configurations
+
+**Organizer** (`organizer.py`) - Existing file reorganization
+- Scans directories for setup files
+- Extracts track info from filenames and paths
+- Reorganizes files into correct iRacing folder structure
+- Supports dry-run, copy, and move modes
 
 **Providers** (`providers/`) - Pluggable provider implementations
 - Base interface for consistent provider behavior
@@ -389,7 +450,7 @@ The default settings balance speed and server courtesy:
 ## FAQ
 
 **Q: Will this delete my existing setups?**
-A: No. The downloader only adds new or updated setups. Existing files are never deleted.
+A: No. The downloader only adds new or updated setups. The organize command moves files but never deletes them.
 
 **Q: How often should I run the downloader?**
 A: Run it as needed to check for setup updates. New setups from your favorite teams are often shared within days.
@@ -405,6 +466,12 @@ A: Yes, the tool is cross-platform. The default path uses `~/Documents/iRacing/s
 
 **Q: What if I interrupt the download?**
 A: The downloader will resume from where it stopped on the next run. State tracking prevents duplicate downloads.
+
+**Q: How do I organize setups I already downloaded?**
+A: Use `iracing-setup-downloader organize ~/Documents/iRacing/setups --dry-run` to preview, then run without `--dry-run` to reorganize. Use `--copy` if you want to keep originals.
+
+**Q: What happens to files the organizer can't recognize?**
+A: They are skipped and left in place. Use `--verbose` to see which files were skipped and why.
 
 ## License
 
