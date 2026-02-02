@@ -5,6 +5,9 @@ description = "A CLI tool for downloading iRacing setups from various providers"
 authors = ["elderfo"]
 readme = "README.md"
 packages = [{ include = "iracing_setup_downloader", from = "src" }]
+include = [
+    { path = "src/iracing_setup_downloader/data/*.json", format = ["sdist", "wheel"] }
+]
 
 [tool.poetry.dependencies]
 python = "^3.11"
