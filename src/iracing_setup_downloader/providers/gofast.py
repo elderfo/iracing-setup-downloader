@@ -35,13 +35,18 @@ class GoFastProvider(SetupProvider):
     This provider interfaces with the GoFast API to fetch and download
     iRacing setups. It requires a bearer token for authentication.
 
+    Note: GoFast provides setups for multiple sims (iRacing, AMS2, LMU, AC, etc.)
+    but this provider only downloads iRacing setups (prefix "IR - ").
+
     Attributes:
         API_ENDPOINT: The GoFast API endpoint for fetching setups
         REQUEST_TIMEOUT: Default timeout for HTTP requests in seconds
+        IRACING_PREFIX: Prefix used to identify iRacing setups in download_name
     """
 
     API_ENDPOINT = "https://go-fast.gg:5002/api/subscription/manualinstall"
     REQUEST_TIMEOUT = 30.0
+    IRACING_PREFIX = "IR - "
 
     def __init__(self, token: str) -> None:
         """Initialize the GoFast provider.
@@ -146,7 +151,14 @@ class GoFastProvider(SetupProvider):
                     raise GoFastAPIError(msg)
 
                 setups = []
+                skipped_other_sims = 0
                 for item in records:
+                    # Check prefix on raw dict first to avoid expensive parsing
+                    download_name = item.get("download_name", "")
+                    if not download_name.startswith(self.IRACING_PREFIX):
+                        skipped_other_sims += 1
+                        continue
+
                     try:
                         setup_record = SetupRecord(**item)
                         setups.append(setup_record)
@@ -154,7 +166,12 @@ class GoFastProvider(SetupProvider):
                         logger.warning("Failed to parse setup record: %s. Skipping.", e)
                         continue
 
-                logger.info("Successfully fetched %d setups", len(setups))
+                if skipped_other_sims > 0:
+                    logger.info(
+                        "Skipped %d non-iRacing setups (AMS2, LMU, AC, etc.)",
+                        skipped_other_sims,
+                    )
+                logger.info("Successfully fetched %d iRacing setups", len(setups))
                 return setups
 
         except (GoFastAuthenticationError, GoFastAPIError):

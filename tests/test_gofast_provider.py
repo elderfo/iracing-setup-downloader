@@ -282,6 +282,84 @@ class TestGoFastProvider:
             with pytest.raises(GoFastAPIError):
                 await gofast_provider.fetch_setups()
 
+    async def test_fetch_setups_filters_non_iracing(self, gofast_provider):
+        """Test fetch_setups filters out non-iRacing setups (AMS2, LMU, AC, etc.)."""
+        mixed_response = [
+            {
+                "id": 1,
+                "download_name": "IR - V1 - Ferrari 296 GT3 - Spa",
+                "download_url": "https://example.com/setup1.zip",
+                "creation_date": "2024-01-15T10:30:00",
+                "updated_date": "2024-01-15T10:30:00",
+                "ver": "26 S1 W8",
+                "setup_ver": "1.0.0",
+                "changelog": "",
+                "cat": "GT3",
+                "series": "IMSA",
+            },
+            {
+                "id": 2,
+                "download_name": "AMS2 - V1.6 - MERCEDES AMG GT3 EVO - NURBURGRING",
+                "download_url": "https://example.com/setup2.zip",
+                "creation_date": "2024-01-15T10:30:00",
+                "updated_date": "2024-01-15T10:30:00",
+                "ver": "1.6",
+                "setup_ver": "1.0.0",
+                "changelog": "",
+                "cat": "GT3",
+                "series": "AMS2",
+            },
+            {
+                "id": 3,
+                "download_name": "LMU - V1 - FERRARI 488 GTE EVO - PAUL RICARD",
+                "download_url": "https://example.com/setup3.zip",
+                "creation_date": "2024-01-15T10:30:00",
+                "updated_date": "2024-01-15T10:30:00",
+                "ver": "1.0",
+                "setup_ver": "1.0.0",
+                "changelog": "",
+                "cat": "GTE",
+                "series": "LMU",
+            },
+            {
+                "id": 4,
+                "download_name": "IR - V1 - Porsche 911 GT3 R - Monza",
+                "download_url": "https://example.com/setup4.zip",
+                "creation_date": "2024-01-15T10:30:00",
+                "updated_date": "2024-01-15T10:30:00",
+                "ver": "26 S1 W8",
+                "setup_ver": "1.0.0",
+                "changelog": "",
+                "cat": "GT3",
+                "series": "IMSA",
+            },
+        ]
+
+        mock_response = MagicMock()
+        mock_response.status = 200
+        api_response = {
+            "status": True,
+            "msg": "Success",
+            "data": {"records": mixed_response},
+        }
+        mock_response.json = AsyncMock(return_value=api_response)
+
+        with patch.object(
+            gofast_provider, "_get_session", new_callable=AsyncMock
+        ) as mock_get_session:
+            mock_session = MagicMock()
+            mock_session.get.return_value.__aenter__.return_value = mock_response
+            mock_get_session.return_value = mock_session
+
+            setups = await gofast_provider.fetch_setups()
+
+            # Should only return the 2 iRacing setups (IDs 1 and 4)
+            assert len(setups) == 2
+            assert setups[0].id == 1
+            assert setups[1].id == 4
+            # Verify they're iRacing setups
+            assert all(s.download_name.startswith("IR - ") for s in setups)
+
     async def test_download_setup_success(
         self, gofast_provider, sample_setup_record, temp_dir
     ):
