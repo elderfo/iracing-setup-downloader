@@ -12,12 +12,14 @@ from rich.table import Table
 from iracing_setup_downloader import __version__
 from iracing_setup_downloader.config import get_settings
 from iracing_setup_downloader.downloader import SetupDownloader
+from iracing_setup_downloader.organizer import OrganizeResult, SetupOrganizer
 from iracing_setup_downloader.providers import GoFastProvider
 from iracing_setup_downloader.providers.gofast import (
     GoFastAuthenticationError,
     GoFastProviderError,
 )
 from iracing_setup_downloader.state import DownloadState
+from iracing_setup_downloader.track_matcher import TrackMatcher
 
 app = typer.Typer(
     name="iracing-setup-downloader",
@@ -153,6 +155,17 @@ def download_gofast(
         console.print(config_table)
         console.print()
 
+        # Initialize track matcher
+        track_matcher = TrackMatcher(settings.tracks_data_path)
+        try:
+            track_matcher.load()
+        except FileNotFoundError as e:
+            console.print(f"[yellow]Warning:[/yellow] Could not load tracks data: {e}")
+            console.print(
+                "[yellow]Track-based folder organization will be disabled.[/yellow]"
+            )
+            track_matcher = None
+
         # Run async download
         asyncio.run(
             _download_gofast_async(
@@ -163,6 +176,7 @@ def download_gofast(
                 settings.max_delay,
                 settings.max_retries,
                 dry_run,
+                track_matcher,
             )
         )
 
@@ -186,6 +200,7 @@ async def _download_gofast_async(
     max_delay: float,
     max_retries: int,
     dry_run: bool,
+    track_matcher: TrackMatcher | None = None,
 ) -> None:
     """Async implementation of GoFast download.
 
@@ -197,8 +212,9 @@ async def _download_gofast_async(
         max_delay: Maximum delay between downloads
         max_retries: Maximum retry attempts
         dry_run: If True, don't actually download
+        track_matcher: Optional TrackMatcher for track-based folder organization
     """
-    provider = GoFastProvider(token=token)
+    provider = GoFastProvider(token=token, track_matcher=track_matcher)
 
     try:
         # Create and load state
@@ -393,6 +409,230 @@ async def _list_gofast_async(token: str) -> None:
         raise
     finally:
         await provider.close()
+
+
+@app.command("organize")
+def organize_setups(
+    source: Path = typer.Argument(
+        ...,
+        help="Directory containing setup files to organize",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        resolve_path=True,
+    ),
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Output directory (default: organize in place)",
+        file_okay=False,
+        dir_okay=True,
+        resolve_path=True,
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show what would be done without making changes",
+    ),
+    copy: bool = typer.Option(
+        False,
+        "--copy",
+        help="Copy files instead of moving them",
+    ),
+    category: str | None = typer.Option(
+        None,
+        "--category",
+        "-c",
+        help="Category hint for track disambiguation (e.g., GT3, NASCAR)",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        help="Enable verbose logging",
+    ),
+) -> None:
+    """Organize existing setup files into iRacing's folder structure.
+
+    Scans a directory for .sto files and reorganizes them into the correct
+    iRacing track folder structure. The organizer extracts track information
+    from filenames and folder paths, then uses intelligent matching to
+    determine the correct iRacing folder location.
+
+    By default, files are moved in place. Use --output to organize to a
+    different directory, or --copy to preserve originals.
+
+    Examples:
+        # Preview changes without making them
+        iracing-setup-downloader organize ~/Documents/iRacing/setups --dry-run
+
+        # Organize files in place
+        iracing-setup-downloader organize ~/Documents/iRacing/setups
+
+        # Organize to a different directory (copies files)
+        iracing-setup-downloader organize ~/old-setups --output ~/Documents/iRacing/setups
+
+        # Copy files instead of moving
+        iracing-setup-downloader organize ~/setups --copy
+
+        # Provide category hint for better track matching
+        iracing-setup-downloader organize ~/gt3-setups --category GT3
+    """
+    setup_logging(verbose)
+
+    try:
+        # Load settings
+        settings = get_settings()
+
+        # Initialize track matcher
+        track_matcher = TrackMatcher(settings.tracks_data_path)
+        try:
+            track_matcher.load()
+        except FileNotFoundError as e:
+            console.print(f"[red]Error:[/red] Could not load tracks data: {e}")
+            console.print("[yellow]Track data is required for organization.[/yellow]")
+            raise typer.Exit(code=1) from e
+
+        # Display configuration
+        config_table = Table(
+            title="Organization Configuration", show_header=False, box=None
+        )
+        config_table.add_row("Source:", str(source))
+        config_table.add_row(
+            "Output:", str(output) if output else "[dim]In place[/dim]"
+        )
+        config_table.add_row(
+            "Mode:", "[cyan]Copy[/cyan]" if copy else "[cyan]Move[/cyan]"
+        )
+        config_table.add_row("Dry Run:", "[yellow]Yes[/yellow]" if dry_run else "No")
+        if category:
+            config_table.add_row("Category Hint:", f"[magenta]{category}[/magenta]")
+        console.print(config_table)
+        console.print()
+
+        # Create organizer and run
+        organizer = SetupOrganizer(track_matcher)
+
+        console.print("[bold]Scanning for setup files...[/bold]\n")
+        result = organizer.organize(
+            source_path=source,
+            output_path=output,
+            dry_run=dry_run,
+            copy=copy,
+            category_hint=category,
+        )
+
+        # Display results
+        _display_organize_results(result, dry_run, verbose)
+
+    except typer.Exit:
+        raise
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Organization cancelled by user.[/yellow]")
+        raise typer.Exit(code=130) from None
+    except FileNotFoundError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(code=1) from e
+    except Exception as e:
+        console.print(f"[red]Unexpected error:[/red] {e}")
+        if verbose:
+            console.print_exception()
+        raise typer.Exit(code=1) from e
+
+
+def _display_organize_results(
+    result: OrganizeResult, dry_run: bool, verbose: bool = False
+) -> None:
+    """Display organization results.
+
+    Args:
+        result: OrganizeResult object
+        dry_run: Whether this was a dry run
+        verbose: Whether to show detailed file list
+    """
+    # Check for suspicious car folders
+    suspicious_folders = {"setups", "setup", "downloads", "download", "backup", "old"}
+    suspicious_actions = [
+        a
+        for a in result.actions
+        if a.will_move and a.car_folder.lower() in suspicious_folders
+    ]
+
+    # Summary table
+    summary_table = Table(show_header=False, box=None, padding=(0, 2))
+    summary_table.add_column("Label", style="bold")
+    summary_table.add_column("Value")
+
+    summary_table.add_row("Total Files:", str(result.total_files))
+    if dry_run:
+        summary_table.add_row("Would Organize:", f"[cyan]{result.organized}[/cyan]")
+    else:
+        summary_table.add_row("Organized:", f"[green]{result.organized}[/green]")
+    summary_table.add_row("Skipped:", f"[yellow]{result.skipped}[/yellow]")
+    if result.failed > 0:
+        summary_table.add_row("Failed:", f"[red]{result.failed}[/red]")
+
+    title = "Organization Results (Dry Run)" if dry_run else "Organization Results"
+    console.print(Panel(summary_table, title=title, border_style="green"))
+
+    # Warn about suspicious car folders
+    if suspicious_actions:
+        console.print()
+        console.print(
+            "[bold yellow]Warning:[/bold yellow] Detected suspicious car folder names "
+            f"(e.g., '{suspicious_actions[0].car_folder}')"
+        )
+        console.print(
+            "  Expected iRacing car folders like 'dalloradw12', 'ferrari296gt3', etc."
+        )
+        console.print(
+            "  If files are not in proper car subfolders, try organizing the parent directory"
+        )
+        console.print("  or manually move files into correct car folders first.")
+
+    # Show actions if verbose or dry run
+    if (verbose or dry_run) and result.actions:
+        console.print()
+
+        # Actions that will/did happen
+        moves = [a for a in result.actions if a.will_move]
+        if moves:
+            action_word = "Would move" if dry_run else "Moved"
+            console.print(f"[bold]{action_word}:[/bold]")
+            for action in moves[:20]:  # Limit to first 20 to avoid spam
+                # Show source relative path (car_folder/filename)
+                rel_src = f"{action.car_folder}/{action.source.name}"
+                # Show destination relative path (car_folder/track/config/filename)
+                track_path = action.track_dirpath.replace(chr(92), "/")
+                rel_dst = f"{action.car_folder}/{track_path}/{action.source.name}"
+                confidence_str = f"[dim]({action.confidence:.0%})[/dim]"
+                console.print(
+                    f"  [green]•[/green] {rel_src}\n"
+                    f"       -> {rel_dst} {confidence_str}"
+                )
+            if len(moves) > 20:
+                console.print(f"  [dim]... and {len(moves) - 20} more[/dim]")
+
+        # Skipped files (only show if verbose)
+        if verbose:
+            skipped = [a for a in result.actions if a.skipped]
+            if skipped:
+                console.print()
+                console.print("[bold yellow]Skipped:[/bold yellow]")
+                for action in skipped[:10]:
+                    console.print(
+                        f"  [yellow]•[/yellow] {action.source.name}: {action.skip_reason}"
+                    )
+                if len(skipped) > 10:
+                    console.print(f"  [dim]... and {len(skipped) - 10} more[/dim]")
+
+    # Show errors
+    errors = [a for a in result.actions if a.error]
+    if errors:
+        console.print()
+        console.print("[bold red]Errors:[/bold red]")
+        for action in errors:
+            console.print(f"  [red]•[/red] {action.source.name}: {action.error}")
 
 
 if __name__ == "__main__":
