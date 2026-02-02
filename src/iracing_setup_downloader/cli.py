@@ -11,6 +11,7 @@ from rich.table import Table
 
 from iracing_setup_downloader import __version__
 from iracing_setup_downloader.config import get_settings
+from iracing_setup_downloader.deduplication import DuplicateDetector
 from iracing_setup_downloader.downloader import SetupDownloader
 from iracing_setup_downloader.organizer import OrganizeResult, SetupOrganizer
 from iracing_setup_downloader.providers import GoFastProvider
@@ -20,6 +21,23 @@ from iracing_setup_downloader.providers.gofast import (
 )
 from iracing_setup_downloader.state import DownloadState
 from iracing_setup_downloader.track_matcher import TrackMatcher
+
+
+def _format_bytes(size: int) -> str:
+    """Format bytes into human-readable string.
+
+    Args:
+        size: Size in bytes
+
+    Returns:
+        Human-readable string like "1.5 MB" or "256 KB"
+    """
+    for unit in ("B", "KB", "MB", "GB"):
+        if abs(size) < 1024:
+            return f"{size:.1f} {unit}" if unit != "B" else f"{size} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
+
 
 app = typer.Typer(
     name="iracing-setup-downloader",
@@ -214,7 +232,17 @@ async def _download_gofast_async(
         dry_run: If True, don't actually download
         track_matcher: Optional TrackMatcher for track-based folder organization
     """
-    provider = GoFastProvider(token=token, track_matcher=track_matcher)
+    # Initialize duplicate detector and build index
+    duplicate_detector = DuplicateDetector()
+    if output_path.exists() and not dry_run:
+        console.print("[bold]Building duplicate detection index...[/bold]")
+        duplicate_detector.build_index(output_path)
+
+    provider = GoFastProvider(
+        token=token,
+        track_matcher=track_matcher,
+        duplicate_detector=duplicate_detector if not dry_run else None,
+    )
 
     try:
         # Create and load state
@@ -281,6 +309,15 @@ def _display_download_results(result, dry_run: bool) -> None:
     results_table.add_row("Skipped:", f"[yellow]{result.skipped}[/yellow]")
     if result.failed > 0:
         results_table.add_row("Failed:", f"[red]{result.failed}[/red]")
+    if result.duplicates_skipped > 0:
+        results_table.add_row(
+            "Duplicates Skipped:", f"[magenta]{result.duplicates_skipped}[/magenta]"
+        )
+        if result.bytes_saved > 0:
+            results_table.add_row(
+                "Space Saved:",
+                f"[magenta]{_format_bytes(result.bytes_saved)}[/magenta]",
+            )
 
     title = "Download Results (Dry Run)" if dry_run else "Download Results"
     console.print(Panel(results_table, title=title, border_style="green"))
@@ -510,8 +547,11 @@ def organize_setups(
         console.print(config_table)
         console.print()
 
+        # Initialize duplicate detector
+        duplicate_detector = DuplicateDetector()
+
         # Create organizer and run
-        organizer = SetupOrganizer(track_matcher)
+        organizer = SetupOrganizer(track_matcher, duplicate_detector=duplicate_detector)
 
         console.print("[bold]Scanning for setup files...[/bold]\n")
         result = organizer.organize(
@@ -571,6 +611,15 @@ def _display_organize_results(
     summary_table.add_row("Skipped:", f"[yellow]{result.skipped}[/yellow]")
     if result.failed > 0:
         summary_table.add_row("Failed:", f"[red]{result.failed}[/red]")
+    if result.duplicates_found > 0:
+        dup_label = "Duplicates Found:" if dry_run else "Duplicates Deleted:"
+        dup_count = result.duplicates_found if dry_run else result.duplicates_deleted
+        summary_table.add_row(dup_label, f"[magenta]{dup_count}[/magenta]")
+        if result.bytes_saved > 0 and not dry_run:
+            summary_table.add_row(
+                "Space Saved:",
+                f"[magenta]{_format_bytes(result.bytes_saved)}[/magenta]",
+            )
 
     title = "Organization Results (Dry Run)" if dry_run else "Organization Results"
     console.print(Panel(summary_table, title=title, border_style="green"))

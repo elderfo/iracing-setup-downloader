@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from iracing_setup_downloader.deduplication import DuplicateDetector
     from iracing_setup_downloader.track_matcher import TrackMatcher
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,9 @@ class OrganizeAction:
         skipped: Whether this file was skipped
         skip_reason: Reason for skipping if skipped
         error: Error message if action failed
+        is_duplicate: Whether this file is a binary duplicate of an existing file
+        duplicate_of: Path to the existing file if is_duplicate is True
+        duplicate_deleted: Whether the duplicate source file was deleted
     """
 
     source: Path
@@ -40,6 +44,9 @@ class OrganizeAction:
     skipped: bool = False
     skip_reason: str = ""
     error: str = ""
+    is_duplicate: bool = False
+    duplicate_of: Path | None = None
+    duplicate_deleted: bool = False
 
     @property
     def will_move(self) -> bool:
@@ -61,6 +68,9 @@ class OrganizeResult:
         skipped: Number of files skipped
         failed: Number of files that failed to organize
         actions: List of all actions taken or planned
+        duplicates_found: Number of duplicate files detected
+        duplicates_deleted: Number of duplicate source files deleted
+        bytes_saved: Total bytes saved by deleting duplicates
     """
 
     total_files: int = 0
@@ -68,13 +78,19 @@ class OrganizeResult:
     skipped: int = 0
     failed: int = 0
     actions: list[OrganizeAction] = field(default_factory=list)
+    duplicates_found: int = 0
+    duplicates_deleted: int = 0
+    bytes_saved: int = 0
 
     def __str__(self) -> str:
         """Return string representation of results."""
-        return (
+        base = (
             f"Total: {self.total_files}, Organized: {self.organized}, "
             f"Skipped: {self.skipped}, Failed: {self.failed}"
         )
+        if self.duplicates_found > 0:
+            base += f", Duplicates: {self.duplicates_found}"
+        return base
 
 
 class SetupOrganizer:
@@ -130,14 +146,22 @@ class SetupOrganizer:
         "eq",
     }
 
-    def __init__(self, track_matcher: TrackMatcher) -> None:
+    def __init__(
+        self,
+        track_matcher: TrackMatcher,
+        duplicate_detector: DuplicateDetector | None = None,
+    ) -> None:
         """Initialize the organizer.
 
         Args:
             track_matcher: TrackMatcher instance for resolving track paths.
                 Must be loaded before use.
+            duplicate_detector: Optional DuplicateDetector for binary duplicate
+                detection. If provided, duplicates will be detected and optionally
+                deleted during organization.
         """
         self._track_matcher = track_matcher
+        self._duplicate_detector = duplicate_detector
 
     def organize(
         self,
@@ -146,6 +170,7 @@ class SetupOrganizer:
         dry_run: bool = False,
         copy: bool = False,
         category_hint: str | None = None,
+        detect_duplicates: bool = True,
     ) -> OrganizeResult:
         """Organize setup files in a directory.
 
@@ -158,6 +183,8 @@ class SetupOrganizer:
             dry_run: If True, don't actually move/copy files, just report actions
             copy: If True, copy files instead of moving them
             category_hint: Optional category hint for track disambiguation (e.g., "GT3")
+            detect_duplicates: If True and duplicate_detector is set, detect and
+                handle binary duplicates (default: True)
 
         Returns:
             OrganizeResult with details of all actions taken
@@ -177,6 +204,11 @@ class SetupOrganizer:
 
         result = OrganizeResult()
 
+        # Build duplicate index if detector is available
+        if detect_duplicates and self._duplicate_detector:
+            logger.info("Building duplicate detection index for %s", effective_output)
+            self._duplicate_detector.build_index(effective_output)
+
         # Find all .sto files
         sto_files = list(source_path.rglob("*.sto"))
         result.total_files = len(sto_files)
@@ -189,11 +221,38 @@ class SetupOrganizer:
                 source_path,
                 effective_output,
                 category_hint,
+                detect_duplicates=detect_duplicates,
             )
             result.actions.append(action)
 
+            # Track duplicate statistics
+            if action.is_duplicate:
+                result.duplicates_found += 1
+
             if action.skipped:
                 result.skipped += 1
+                # Handle duplicate deletion for skipped files (when moving, not copying)
+                if (
+                    action.is_duplicate
+                    and not dry_run
+                    and not copy
+                    and action.duplicate_of
+                ):
+                    try:
+                        file_size = sto_file.stat().st_size
+                        sto_file.unlink()
+                        action.duplicate_deleted = True
+                        result.duplicates_deleted += 1
+                        result.bytes_saved += file_size
+                        logger.info(
+                            "Deleted duplicate: %s (identical to %s)",
+                            sto_file,
+                            action.duplicate_of,
+                        )
+                        # Clean up empty directories
+                        self._cleanup_empty_dirs(sto_file.parent)
+                    except OSError as e:
+                        logger.warning("Failed to delete duplicate %s: %s", sto_file, e)
                 continue
 
             if action.error:
@@ -205,6 +264,9 @@ class SetupOrganizer:
                 try:
                     self._execute_action(action, copy=copy)
                     result.organized += 1
+                    # Add newly written file to index
+                    if self._duplicate_detector and action.destination:
+                        self._duplicate_detector.add_to_index(action.destination)
                 except Exception as e:
                     action.error = str(e)
                     result.failed += 1
@@ -220,6 +282,7 @@ class SetupOrganizer:
         source_root: Path,
         output_root: Path,
         category_hint: str | None,
+        detect_duplicates: bool = True,
     ) -> OrganizeAction:
         """Process a single .sto file and determine its organization.
 
@@ -228,6 +291,7 @@ class SetupOrganizer:
             source_root: Root of the source directory
             output_root: Root of the output directory
             category_hint: Optional category for disambiguation
+            detect_duplicates: Whether to check for binary duplicates
 
         Returns:
             OrganizeAction describing what should happen to this file
@@ -308,9 +372,42 @@ class SetupOrganizer:
 
         # Check if destination already exists
         if destination.exists() and destination != file_path:
+            # Check if it's a binary duplicate of the existing file
+            if (
+                detect_duplicates
+                and self._duplicate_detector
+                and self._duplicate_detector.is_duplicate(file_path, destination)
+            ):
+                action.is_duplicate = True
+                action.duplicate_of = destination
+                action.skipped = True
+                action.skip_reason = f"Binary duplicate of existing: {destination.name}"
+                logger.debug(
+                    "File %s is binary duplicate of %s",
+                    file_path.name,
+                    destination.name,
+                )
+                return action
             action.skipped = True
             action.skip_reason = f"Destination already exists: {destination}"
             return action
+
+        # Check if file is a duplicate of another file elsewhere in target
+        if detect_duplicates and self._duplicate_detector:
+            dup_info = self._duplicate_detector.find_duplicate(file_path)
+            if dup_info:
+                action.is_duplicate = True
+                action.duplicate_of = dup_info.existing_path
+                action.skipped = True
+                action.skip_reason = (
+                    f"Binary duplicate of existing: {dup_info.existing_path.name}"
+                )
+                logger.debug(
+                    "File %s is binary duplicate of %s",
+                    file_path.name,
+                    dup_info.existing_path.name,
+                )
+                return action
 
         return action
 

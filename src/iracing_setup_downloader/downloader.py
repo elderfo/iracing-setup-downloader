@@ -32,6 +32,8 @@ class DownloadResult(BaseModel):
         downloaded: Number of setups successfully downloaded
         failed: Number of setups that failed to download
         errors: List of tuples containing failed setups and error messages
+        duplicates_skipped: Number of duplicate files skipped during extraction
+        bytes_saved: Total bytes saved by skipping duplicates
     """
 
     total_available: int = Field(..., description="Total setups available")
@@ -41,6 +43,12 @@ class DownloadResult(BaseModel):
     errors: list[tuple[str, str]] = Field(
         default_factory=list,
         description="List of (setup_id, error_message) tuples",
+    )
+    duplicates_skipped: int = Field(
+        default=0, description="Duplicate files skipped during extraction"
+    )
+    bytes_saved: int = Field(
+        default=0, description="Bytes saved by skipping duplicates"
     )
 
     def __str__(self) -> str:
@@ -55,6 +63,9 @@ class DownloadResult(BaseModel):
             f"Skipped: {self.skipped}",
             f"Failed: {self.failed}",
         ]
+
+        if self.duplicates_skipped > 0:
+            lines.append(f"Duplicates skipped: {self.duplicates_skipped}")
 
         if self.errors:
             lines.append("\nErrors:")

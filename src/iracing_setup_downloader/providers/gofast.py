@@ -15,6 +15,7 @@ from iracing_setup_downloader.models import SetupRecord
 from iracing_setup_downloader.providers.base import SetupProvider
 
 if TYPE_CHECKING:
+    from iracing_setup_downloader.deduplication import DuplicateDetector, DuplicateInfo
     from iracing_setup_downloader.track_matcher import TrackMatcher
 
 logger = logging.getLogger(__name__)
@@ -55,15 +56,22 @@ class GoFastProvider(SetupProvider):
     REQUEST_TIMEOUT = 30.0
     IRACING_PREFIX = "IR - "
 
-    def __init__(self, token: str, track_matcher: TrackMatcher | None = None) -> None:
+    def __init__(
+        self,
+        token: str,
+        track_matcher: TrackMatcher | None = None,
+        duplicate_detector: DuplicateDetector | None = None,
+    ) -> None:
         """Initialize the GoFast provider.
 
         Args:
             token: GoFast API bearer token (should include "Bearer " prefix)
             track_matcher: Optional TrackMatcher for track-based folder organization
+            duplicate_detector: Optional DuplicateDetector for skipping binary duplicates
         """
         self._token = token
         self._track_matcher = track_matcher
+        self._duplicate_detector = duplicate_detector
         self._session: aiohttp.ClientSession | None = None
         logger.info("GoFast provider initialized")
 
@@ -250,13 +258,22 @@ class GoFastProvider(SetupProvider):
                     logger.error(msg)
                     raise GoFastDownloadError(msg) from e
 
-                # Extract ZIP file
-                extracted_files = self._extract_zip(content, output_path, setup)
+                # Extract ZIP file with duplicate detection
+                extracted_files, duplicates = self._extract_zip(
+                    content, output_path, setup
+                )
 
-                if not extracted_files:
+                if not extracted_files and not duplicates:
                     msg = f"No .sto files found in ZIP for setup {setup.id}"
                     logger.error(msg)
                     raise GoFastDownloadError(msg)
+
+                if duplicates:
+                    logger.info(
+                        "Skipped %d duplicate files from setup %s",
+                        len(duplicates),
+                        setup.download_name,
+                    )
 
                 logger.info(
                     "Successfully extracted %d files from setup %s",
@@ -325,7 +342,7 @@ class GoFastProvider(SetupProvider):
 
     def _extract_zip(
         self, content: bytes, output_path: Path, setup: SetupRecord
-    ) -> list[Path]:
+    ) -> tuple[list[Path], list[DuplicateInfo]]:
         """Extract ZIP content to the output path.
 
         Extracts .sto files from the ZIP, preserving the car folder
@@ -333,18 +350,25 @@ class GoFastProvider(SetupProvider):
         when a TrackMatcher is available. Files are renamed to follow
         the standard naming convention.
 
+        When a DuplicateDetector is configured, files are checked against
+        existing files before extraction. Binary duplicates are skipped.
+
         Args:
             content: ZIP file content as bytes
             output_path: Base directory to extract to
             setup: The setup record with metadata for filename generation
 
         Returns:
-            List of paths to extracted .sto files
+            Tuple of (list of paths to extracted .sto files, list of DuplicateInfo)
 
         Raises:
             GoFastDownloadError: If extraction fails
         """
+        # Import here to avoid circular import
+        from iracing_setup_downloader.deduplication import DuplicateInfo
+
         extracted_files: list[Path] = []
+        duplicates: list[DuplicateInfo] = []
 
         # Resolve track subdirectory if track matcher is available
         track_subdir = ""
@@ -417,12 +441,44 @@ class GoFastProvider(SetupProvider):
 
                     output_file = output_dir / new_filename
 
+                    # Read file content for duplicate checking
+                    with zf.open(zip_info) as src:
+                        file_content = src.read()
+
+                    # Check for binary duplicates before writing
+                    if self._duplicate_detector:
+                        content_hash = (
+                            self._duplicate_detector.hash_cache.compute_hash_from_bytes(
+                                file_content
+                            )
+                        )
+                        existing = self._duplicate_detector.find_duplicate_by_hash(
+                            content_hash, len(file_content), original_filename
+                        )
+                        if existing:
+                            dup_info = DuplicateInfo(
+                                source_path=output_file,  # Would-be path
+                                existing_path=existing,
+                                file_hash=content_hash,
+                                file_size=len(file_content),
+                            )
+                            duplicates.append(dup_info)
+                            logger.debug(
+                                "Skipping duplicate: %s (matches %s)",
+                                new_filename,
+                                existing.name,
+                            )
+                            continue
+
                     # Create output directory
                     output_dir.mkdir(parents=True, exist_ok=True)
 
-                    # Extract file
-                    with zf.open(zip_info) as src:
-                        output_file.write_bytes(src.read())
+                    # Write file
+                    output_file.write_bytes(file_content)
+
+                    # Add to duplicate detector index
+                    if self._duplicate_detector:
+                        self._duplicate_detector.add_to_index(output_file)
 
                     logger.debug("Extracted: %s", output_file)
                     extracted_files.append(output_file)
@@ -436,7 +492,7 @@ class GoFastProvider(SetupProvider):
             logger.error(msg)
             raise GoFastDownloadError(msg) from e
 
-        return extracted_files
+        return extracted_files, duplicates
 
     async def close(self) -> None:
         """Clean up provider resources.
