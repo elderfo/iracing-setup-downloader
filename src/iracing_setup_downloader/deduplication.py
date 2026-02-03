@@ -7,6 +7,15 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -131,7 +140,10 @@ class FileHashCache:
         return hashlib.sha256(content).hexdigest()
 
     def preload_directory(
-        self, directory: Path, pattern: str = "*.sto"
+        self,
+        directory: Path,
+        pattern: str = "*.sto",
+        show_progress: bool = True,
     ) -> dict[str, list[Path]]:
         """Pre-hash all matching files in a directory.
 
@@ -141,6 +153,7 @@ class FileHashCache:
         Args:
             directory: Directory to scan
             pattern: Glob pattern for files to hash (default: "*.sto")
+            show_progress: Whether to show a progress bar (default: True)
 
         Returns:
             Dictionary mapping hash to list of file paths with that hash
@@ -152,16 +165,16 @@ class FileHashCache:
             return hash_to_paths
 
         files = list(directory.rglob(pattern))
-        logger.info("Pre-hashing %d files in %s", len(files), directory)
+        total_files = len(files)
+        logger.info("Pre-hashing %d files in %s", total_files, directory)
 
-        for file_path in files:
-            try:
-                file_hash = self.get_hash(file_path)
-                if file_hash not in hash_to_paths:
-                    hash_to_paths[file_hash] = []
-                hash_to_paths[file_hash].append(file_path)
-            except OSError as e:
-                logger.warning("Failed to hash %s: %s", file_path, e)
+        if total_files == 0:
+            return hash_to_paths
+
+        if show_progress and total_files > 0:
+            hash_to_paths = self._preload_with_progress(files)
+        else:
+            hash_to_paths = self._preload_without_progress(files)
 
         # Log duplicates found during preload
         duplicates = {h: paths for h, paths in hash_to_paths.items() if len(paths) > 1}
@@ -171,6 +184,62 @@ class FileHashCache:
                 len(duplicates),
                 sum(len(paths) - 1 for paths in duplicates.values()),
             )
+
+        return hash_to_paths
+
+    def _preload_with_progress(self, files: list[Path]) -> dict[str, list[Path]]:
+        """Pre-hash files with a progress bar.
+
+        Args:
+            files: List of files to hash
+
+        Returns:
+            Dictionary mapping hash to list of file paths
+        """
+        hash_to_paths: dict[str, list[Path]] = {}
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            transient=False,
+        ) as progress:
+            task_id = progress.add_task("Building file index", total=len(files))
+
+            for file_path in files:
+                try:
+                    file_hash = self.get_hash(file_path)
+                    if file_hash not in hash_to_paths:
+                        hash_to_paths[file_hash] = []
+                    hash_to_paths[file_hash].append(file_path)
+                except OSError as e:
+                    logger.warning("Failed to hash %s: %s", file_path, e)
+                finally:
+                    progress.update(task_id, advance=1)
+
+        return hash_to_paths
+
+    def _preload_without_progress(self, files: list[Path]) -> dict[str, list[Path]]:
+        """Pre-hash files without a progress bar.
+
+        Args:
+            files: List of files to hash
+
+        Returns:
+            Dictionary mapping hash to list of file paths
+        """
+        hash_to_paths: dict[str, list[Path]] = {}
+
+        for file_path in files:
+            try:
+                file_hash = self.get_hash(file_path)
+                if file_hash not in hash_to_paths:
+                    hash_to_paths[file_hash] = []
+                hash_to_paths[file_hash].append(file_path)
+            except OSError as e:
+                logger.warning("Failed to hash %s: %s", file_path, e)
 
         return hash_to_paths
 
@@ -203,7 +272,7 @@ class DuplicateDetector:
     _hash_index: dict[str, Path] = field(default_factory=dict, repr=False)
     _indexed_directory: Path | None = field(default=None, repr=False)
 
-    def build_index(self, target_directory: Path) -> int:
+    def build_index(self, target_directory: Path, show_progress: bool = True) -> int:
         """Build/rebuild the hash index for a target directory.
 
         Pre-computes hashes for all .sto files in the target directory.
@@ -211,6 +280,7 @@ class DuplicateDetector:
 
         Args:
             target_directory: Directory to index
+            show_progress: Whether to show a progress bar (default: True)
 
         Returns:
             Number of files indexed
@@ -222,7 +292,9 @@ class DuplicateDetector:
             logger.debug("Target directory does not exist: %s", target_directory)
             return 0
 
-        hash_to_paths = self.hash_cache.preload_directory(target_directory)
+        hash_to_paths = self.hash_cache.preload_directory(
+            target_directory, show_progress=show_progress
+        )
 
         # Build index: for duplicate hashes, keep the first path found
         for file_hash, paths in hash_to_paths.items():

@@ -87,7 +87,7 @@ class TestFileHashCache:
         empty_dir = tmp_path / "empty"
         empty_dir.mkdir()
 
-        result = cache.preload_directory(empty_dir)
+        result = cache.preload_directory(empty_dir, show_progress=False)
 
         assert result == {}
 
@@ -95,7 +95,7 @@ class TestFileHashCache:
         """Test preloading a nonexistent directory."""
         cache = FileHashCache()
 
-        result = cache.preload_directory(tmp_path / "nonexistent")
+        result = cache.preload_directory(tmp_path / "nonexistent", show_progress=False)
 
         assert result == {}
 
@@ -108,7 +108,7 @@ class TestFileHashCache:
         (tmp_path / "file1.sto").write_bytes(content1)
         (tmp_path / "file2.sto").write_bytes(content2)
 
-        result = cache.preload_directory(tmp_path)
+        result = cache.preload_directory(tmp_path, show_progress=False)
 
         assert len(result) == 2
         hash1 = hashlib.sha256(content1).hexdigest()
@@ -125,7 +125,7 @@ class TestFileHashCache:
         (tmp_path / "file2.sto").write_bytes(duplicate_content)
         (tmp_path / "file3.sto").write_bytes(b"unique content")
 
-        result = cache.preload_directory(tmp_path)
+        result = cache.preload_directory(tmp_path, show_progress=False)
 
         # Should have 2 unique hashes
         assert len(result) == 2
@@ -142,7 +142,7 @@ class TestFileHashCache:
         (tmp_path / "root.sto").write_bytes(b"root")
         (subdir / "nested.sto").write_bytes(b"nested")
 
-        result = cache.preload_directory(tmp_path)
+        result = cache.preload_directory(tmp_path, show_progress=False)
 
         assert len(result) == 2
 
@@ -153,7 +153,7 @@ class TestFileHashCache:
         (tmp_path / "setup.sto").write_bytes(b"setup")
         (tmp_path / "readme.txt").write_bytes(b"readme")
 
-        result = cache.preload_directory(tmp_path, pattern="*.sto")
+        result = cache.preload_directory(tmp_path, pattern="*.sto", show_progress=False)
 
         assert len(result) == 1
 
@@ -176,7 +176,7 @@ class TestFileHashCache:
         (tmp_path / "file1.sto").write_bytes(b"one")
         (tmp_path / "file2.sto").write_bytes(b"two")
 
-        cache.preload_directory(tmp_path)
+        cache.preload_directory(tmp_path, show_progress=False)
         assert len(cache._cache) == 2
 
         cache.clear()
@@ -221,7 +221,7 @@ class TestDuplicateDetector:
         empty_dir = tmp_path / "empty"
         empty_dir.mkdir()
 
-        count = detector.build_index(empty_dir)
+        count = detector.build_index(empty_dir, show_progress=False)
 
         assert count == 0
         assert detector.indexed_count == 0
@@ -230,7 +230,7 @@ class TestDuplicateDetector:
         """Test building index for nonexistent directory."""
         detector = DuplicateDetector()
 
-        count = detector.build_index(tmp_path / "nonexistent")
+        count = detector.build_index(tmp_path / "nonexistent", show_progress=False)
 
         assert count == 0
 
@@ -240,7 +240,7 @@ class TestDuplicateDetector:
         (tmp_path / "file1.sto").write_bytes(b"content1")
         (tmp_path / "file2.sto").write_bytes(b"content2")
 
-        count = detector.build_index(tmp_path)
+        count = detector.build_index(tmp_path, show_progress=False)
 
         assert count == 2
         assert detector.indexed_count == 2
@@ -252,7 +252,7 @@ class TestDuplicateDetector:
         (tmp_path / "dup1.sto").write_bytes(dup_content)
         (tmp_path / "dup2.sto").write_bytes(dup_content)
 
-        count = detector.build_index(tmp_path)
+        count = detector.build_index(tmp_path, show_progress=False)
 
         # Should have only 1 unique hash
         assert count == 1
@@ -264,7 +264,7 @@ class TestDuplicateDetector:
         target_dir.mkdir()
         (target_dir / "existing.sto").write_bytes(b"existing")
 
-        detector.build_index(target_dir)
+        detector.build_index(target_dir, show_progress=False)
 
         source = tmp_path / "source.sto"
         source.write_bytes(b"different content")
@@ -282,7 +282,7 @@ class TestDuplicateDetector:
         existing = target_dir / "existing.sto"
         existing.write_bytes(content)
 
-        detector.build_index(target_dir)
+        detector.build_index(target_dir, show_progress=False)
 
         source = tmp_path / "source.sto"
         source.write_bytes(content)
@@ -303,7 +303,7 @@ class TestDuplicateDetector:
         existing = target_dir / "file.sto"
         existing.write_bytes(b"content")
 
-        detector.build_index(target_dir)
+        detector.build_index(target_dir, show_progress=False)
 
         result = detector.find_duplicate(existing)
 
@@ -316,7 +316,7 @@ class TestDuplicateDetector:
         target_dir.mkdir()
         (target_dir / "existing.sto").write_bytes(b"existing")
 
-        detector.build_index(target_dir)
+        detector.build_index(target_dir, show_progress=False)
 
         result = detector.find_duplicate_by_hash("nonexistent_hash", 100)
 
@@ -331,7 +331,7 @@ class TestDuplicateDetector:
         existing = target_dir / "existing.sto"
         existing.write_bytes(content)
 
-        detector.build_index(target_dir)
+        detector.build_index(target_dir, show_progress=False)
 
         content_hash = hashlib.sha256(content).hexdigest()
         result = detector.find_duplicate_by_hash(content_hash, len(content))
@@ -378,7 +378,7 @@ class TestDuplicateDetector:
     def test_add_to_index(self, tmp_path):
         """Test add_to_index adds file to index."""
         detector = DuplicateDetector()
-        detector.build_index(tmp_path)
+        detector.build_index(tmp_path, show_progress=False)
 
         new_file = tmp_path / "new.sto"
         new_file.write_bytes(b"new content")
@@ -397,7 +397,7 @@ class TestDuplicateDetector:
         file1.write_bytes(content)
         file2.write_bytes(content)
 
-        detector.build_index(tmp_path)
+        detector.build_index(tmp_path, show_progress=False)
         # file1 should be indexed
         initial_count = detector.indexed_count
 
@@ -412,7 +412,7 @@ class TestDuplicateDetector:
         test_file = tmp_path / "test.sto"
         test_file.write_bytes(b"content")
 
-        detector.build_index(tmp_path)
+        detector.build_index(tmp_path, show_progress=False)
         assert detector.indexed_count == 1
 
         detector.remove_from_index(test_file)
@@ -425,7 +425,7 @@ class TestDuplicateDetector:
 
         assert detector.indexed_directory is None
 
-        detector.build_index(tmp_path)
+        detector.build_index(tmp_path, show_progress=False)
 
         assert detector.indexed_directory == tmp_path.resolve()
 
@@ -452,7 +452,7 @@ class TestDuplicateDetectorIntegration:
 
         # Initialize detector
         detector = DuplicateDetector()
-        detector.build_index(target)
+        detector.build_index(target, show_progress=False)
 
         # Check files
         dup_result = detector.find_duplicate(duplicate)
@@ -470,7 +470,7 @@ class TestDuplicateDetectorIntegration:
         dir1 = tmp_path / "dir1"
         dir1.mkdir()
         (dir1 / "file1.sto").write_bytes(b"content1")
-        detector.build_index(dir1)
+        detector.build_index(dir1, show_progress=False)
         assert detector.indexed_count == 1
 
         # Rebuild with different directory
@@ -478,7 +478,7 @@ class TestDuplicateDetectorIntegration:
         dir2.mkdir()
         (dir2 / "file2.sto").write_bytes(b"content2")
         (dir2 / "file3.sto").write_bytes(b"content3")
-        detector.build_index(dir2)
+        detector.build_index(dir2, show_progress=False)
 
         assert detector.indexed_count == 2
         assert detector.indexed_directory == dir2.resolve()
@@ -491,7 +491,7 @@ class TestDuplicateDetectorIntegration:
         content = b"existing setup content"
         (target / "existing.sto").write_bytes(content)
 
-        detector.build_index(target)
+        detector.build_index(target, show_progress=False)
 
         # Simulate download: hash content before writing
         download_content = b"existing setup content"
