@@ -30,6 +30,16 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("token", "gofast_token"),
         description="Go Fast bearer token for API authentication",
     )
+    cda_session_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("cda_session_id"),
+        description="CDA PHPSESSID cookie for API authentication",
+    )
+    cda_csrf_token: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("cda_csrf_token"),
+        description="CDA x-elle-csrf-token header for API authentication",
+    )
     output_path: Path = Field(
         default=Path.home() / "Documents" / "iRacing" / "setups",
         validation_alias=AliasChoices("output_path", "iracing_setups_path"),

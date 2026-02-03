@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/elderfo/iracing-setup-downloader/actions/workflows/ci.yml/badge.svg)](https://github.com/elderfo/iracing-setup-downloader/actions/workflows/ci.yml)
 
-A fast, efficient CLI tool for downloading iRacing setups from GoFast with intelligent caching, concurrent downloads, and smart rate limiting. Automatically organizes setups by car and track, skips already-downloaded files, and provides rich progress visualization.
+A fast, efficient CLI tool for downloading iRacing setups from GoFast and Coach Dave Academy (CDA) with intelligent caching, concurrent downloads, and smart rate limiting. Automatically organizes setups by car and track, skips already-downloaded files, and provides rich progress visualization.
 
 ## Features
 
@@ -61,8 +61,12 @@ cp .env.example .env
 Then edit `.env` with your settings:
 
 ```bash
-# GoFast API Authentication Token (required)
+# GoFast API Authentication Token (required for GoFast)
 GOFAST_TOKEN=your_token_here
+
+# Coach Dave Academy (CDA) Authentication (required for CDA)
+CDA_SESSION_ID=your_phpsessid_cookie
+CDA_CSRF_TOKEN=your_csrf_token
 
 # Directory for downloaded setups (optional, defaults to ~/Documents/iRacing/setups)
 IRACING_SETUPS_PATH=~/Documents/iRacing/setups
@@ -81,7 +85,9 @@ MAX_RETRIES=3          # Retry attempts for failed downloads
 
 | Variable | Default | Range | Description |
 |----------|---------|-------|-------------|
-| `GOFAST_TOKEN` | Required | - | GoFast API bearer token |
+| `GOFAST_TOKEN` | Required for GoFast | - | GoFast API bearer token |
+| `CDA_SESSION_ID` | Required for CDA | - | CDA PHPSESSID cookie |
+| `CDA_CSRF_TOKEN` | Required for CDA | - | CDA x-elle-csrf-token header |
 | `IRACING_SETUPS_PATH` | `~/Documents/iRacing/setups` | - | Directory to save setups |
 | `MAX_CONCURRENT` | 5 | 1-20 | Parallel download limit |
 | `MIN_DELAY` | 0.5 | >= 0 | Minimum delay between downloads (seconds) |
@@ -99,14 +105,32 @@ MAX_RETRIES=3          # Retry attempts for failed downloads
 5. Look for the Authorization header in the request headers
 6. Copy the entire value (including "Bearer " prefix if present) to `GOFAST_TOKEN`
 
+### Getting Your CDA Credentials
+
+1. Visit Coach Dave Academy Delta (https://delta.coachdaveacademy.com) in your browser
+2. Log in to your CDA account
+3. Open Developer Tools (F12 or Ctrl+Shift+I)
+4. Navigate to the Application tab (Chrome) or Storage tab (Firefox)
+5. Find Cookies for delta.coachdaveacademy.com
+6. Copy the `PHPSESSID` cookie value to `CDA_SESSION_ID`
+7. Navigate to the Network tab and reload the page
+8. Look for any API request and find the `x-elle-csrf-token` header
+9. Copy that value to `CDA_CSRF_TOKEN`
+
+**Note:** CDA credentials may expire and need to be refreshed periodically by logging in again.
+
 ## Usage
 
 ### List Available Setups
 
-View all available setups from GoFast without downloading:
+View all available setups without downloading:
 
 ```bash
+# List GoFast setups
 poetry run iracing-setup-downloader list gofast
+
+# List CDA setups
+poetry run iracing-setup-downloader list cda
 ```
 
 This displays:
@@ -115,18 +139,22 @@ This displays:
 - Track name
 - Setup version
 - Series category
-- Last updated date
+- Last updated date (GoFast only)
 
 ### Download All Setups
 
 Download all available setups that haven't been previously downloaded:
 
 ```bash
+# Download from GoFast
 poetry run iracing-setup-downloader download gofast
+
+# Download from Coach Dave Academy
+poetry run iracing-setup-downloader download cda
 ```
 
 The tool will:
-1. Fetch all setups from GoFast
+1. Fetch all setups from the provider
 2. Check local state to identify new setups
 3. Skip setups already downloaded (unless updated)
 4. Download new setups with progress visualization
@@ -136,7 +164,11 @@ The tool will:
 Preview what would be downloaded without actually downloading:
 
 ```bash
+# GoFast dry run
 poetry run iracing-setup-downloader download gofast --dry-run
+
+# CDA dry run
+poetry run iracing-setup-downloader download cda --dry-run
 ```
 
 Useful for:
@@ -151,11 +183,7 @@ Specify a non-default download directory:
 
 ```bash
 poetry run iracing-setup-downloader download gofast --output ./my-setups
-```
-
-Also supports:
-```bash
-poetry run iracing-setup-downloader download gofast --output ~/Downloads/iRacing
+poetry run iracing-setup-downloader download cda --output ~/Downloads/iRacing
 ```
 
 ### Organize Existing Setups
@@ -195,7 +223,9 @@ The organizer:
 ```bash
 poetry run iracing-setup-downloader --help
 poetry run iracing-setup-downloader download gofast --help
+poetry run iracing-setup-downloader download cda --help
 poetry run iracing-setup-downloader list gofast --help
+poetry run iracing-setup-downloader list cda --help
 poetry run iracing-setup-downloader organize --help
 ```
 
@@ -271,12 +301,14 @@ When organizing setups, the tool automatically handles companion files that are 
 
 ### Filename Format
 
-Setups are named: `GoFast_<series>_<season>_<track>_<id>.sto`
+**GoFast:** Setups are named: `GoFast_<series>_<season>_<track>_<setup_type>.sto`
+
+**CDA:** Setups are named: `CDA_<series>_<season>_<track>_<setup_type>.sto`
 
 - `series` - Racing series (IMSA, GT World Challenge, etc.)
 - `season` - Season identifier (26S1W8 = Season 26, Week 1, Session 8)
 - `track` - Track name with spaces removed
-- `id` - Unique setup ID for tracking
+- `setup_type` - Type of setup (Race, Qualifying, etc.)
 
 ## State Management
 
@@ -363,7 +395,8 @@ iracing-setup-downloader/
 │   └── providers/
 │       ├── base.py              # Provider interface
 │       ├── __init__.py
-│       └── gofast.py            # GoFast provider implementation
+│       ├── gofast.py            # GoFast provider implementation
+│       └── cda.py               # Coach Dave Academy provider
 ├── tests/                       # Test suite
 ├── pyproject.toml              # Poetry configuration
 ├── .env.example                # Configuration template
@@ -393,6 +426,7 @@ iracing-setup-downloader/
 **Providers** (`providers/`) - Pluggable provider implementations
 - Base interface for consistent provider behavior
 - GoFast provider for fetching and downloading setups
+- CDA provider for Coach Dave Academy setups
 
 **Downloader** (`downloader.py`) - Download orchestration
 - Concurrent download management
@@ -418,7 +452,7 @@ See `providers/gofast.py` for an example implementation.
 
 ## Troubleshooting
 
-### Authentication Failed
+### GoFast Authentication Failed
 
 **Error:** "Authentication failed: Invalid or expired token"
 
@@ -427,6 +461,16 @@ See `providers/gofast.py` for an example implementation.
 - Ensure the token includes the "Bearer " prefix if required
 - Check that the token hasn't expired
 - Regenerate the token from GoFast and update `.env`
+
+### CDA Authentication Failed
+
+**Error:** "Authentication failed: Invalid or expired session"
+
+**Solution:**
+- Verify both `CDA_SESSION_ID` and `CDA_CSRF_TOKEN` are set in `.env`
+- Log in to CDA Delta again to refresh your session
+- Re-extract the PHPSESSID cookie and csrf-token header
+- CDA sessions expire after inactivity, so you may need to refresh periodically
 
 ### Connection Timeout
 

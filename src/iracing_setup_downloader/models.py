@@ -138,3 +138,39 @@ class SetupRecord(BaseModel):
             The season identifier with spaces removed
         """
         return self.ver.replace(" ", "")
+
+
+class CDASetupInfo(BaseModel):
+    """CDA-specific setup metadata.
+
+    This model holds the structured data from CDA's catalog API that is
+    needed to identify and download setups.
+
+    Attributes:
+        series_id: Numeric series identifier (e.g., 160 for IMSA)
+        series_name: Human-readable series name (e.g., "25S4 IMSA Racing Series")
+        bundle_id: Bundle identifier for the setup package
+        week_number: Race week number (1-indexed)
+        car_slug: URL-safe car identifier (e.g., "porsche-911-gt3-r-992")
+        track_slug: URL-safe track identifier (e.g., "watkins-glen-international")
+        track_name: Human-readable track name (e.g., "Watkins Glen International")
+        laptime: Optional laptime info (e.g., "Dry: 1:49.884")
+    """
+
+    series_id: int = Field(..., description="Numeric series identifier")
+    series_name: str = Field(..., description="Human-readable series name")
+    bundle_id: int = Field(..., description="Bundle identifier for the setup package")
+    week_number: int = Field(..., ge=1, description="Race week number (1-indexed)")
+    car_slug: str = Field(..., description="URL-safe car identifier")
+    track_slug: str = Field(..., description="URL-safe track identifier")
+    track_name: str = Field(..., description="Human-readable track name")
+    laptime: str | None = Field(default=None, description="Optional laptime info")
+
+    @property
+    def unique_id(self) -> str:
+        """Generate a unique identifier for state tracking.
+
+        Returns:
+            Compound key in format {series_id}_{bundle_id}_{week_number}
+        """
+        return f"{self.series_id}_{self.bundle_id}_{self.week_number}"
