@@ -9,6 +9,7 @@ from iracing_setup_downloader.organizer import (
     OrganizeAction,
     OrganizeResult,
     SetupOrganizer,
+    sanitize_filename,
 )
 from iracing_setup_downloader.track_matcher import TrackMatcher
 
@@ -950,3 +951,80 @@ class TestCompanionFiles:
 
         # Verify source companion still exists (wasn't moved)
         assert source_companion.exists()
+
+
+class TestFileSanitization:
+    """Tests for filename sanitization (spaces to underscores)."""
+
+    def test_sanitize_filename_with_spaces(self):
+        """Test that spaces are replaced with underscores."""
+        result, changed = sanitize_filename("GO Fast Setup Race.sto")
+
+        assert result == "GO_Fast_Setup_Race.sto"
+        assert changed is True
+
+    def test_sanitize_filename_no_spaces(self):
+        """Test that filenames without spaces are unchanged."""
+        result, changed = sanitize_filename("GoFast_Setup_Race.sto")
+
+        assert result == "GoFast_Setup_Race.sto"
+        assert changed is False
+
+    def test_sanitize_filename_empty(self):
+        """Test that empty filenames are handled."""
+        result, changed = sanitize_filename("")
+
+        assert result == ""
+        assert changed is False
+
+    def test_organize_renames_files_with_spaces(self, organizer, tmp_path):
+        """Test that files with spaces in names are renamed during organization."""
+        # Create test directory structure
+        car_dir = tmp_path / "ferrari296gt3"
+        car_dir.mkdir()
+        setup_file = car_dir / "GoFast IMSA 26S1W8 Spa Race.sto"
+        setup_file.write_bytes(b"test content")
+
+        result = organizer.organize(tmp_path, dry_run=False)
+
+        # Should be organized and renamed
+        assert result.organized == 1
+        assert result.files_renamed == 1
+
+        # Check destination filename has underscores
+        organized_action = next(
+            a for a in result.actions if a.will_move or a.destination is not None
+        )
+        if organized_action.destination:
+            assert " " not in organized_action.destination.name
+
+    def test_organize_tracks_renamed_files(self, organizer, tmp_path):
+        """Test that files_renamed counter is accurate."""
+        # Create test directory structure with mixed filenames
+        car_dir = tmp_path / "ferrari296gt3"
+        car_dir.mkdir()
+
+        # File with spaces
+        setup1 = car_dir / "GoFast IMSA 26S1W8 Spa Race.sto"
+        setup1.write_bytes(b"test content 1")
+
+        # File without spaces
+        setup2 = car_dir / "GoFast_IMSA_26S1W8_Monza_Race.sto"
+        setup2.write_bytes(b"test content 2")
+
+        result = organizer.organize(tmp_path, dry_run=False)
+
+        # Only the file with spaces should be counted as renamed
+        assert result.files_renamed == 1
+
+    def test_organize_result_str_includes_renamed(self, organizer, tmp_path):
+        """Test that OrganizeResult string includes renamed count."""
+        car_dir = tmp_path / "ferrari296gt3"
+        car_dir.mkdir()
+        setup_file = car_dir / "GoFast IMSA 26S1W8 Spa Race.sto"
+        setup_file.write_bytes(b"test content")
+
+        result = organizer.organize(tmp_path, dry_run=False)
+        result_str = str(result)
+
+        assert "Renamed: 1" in result_str

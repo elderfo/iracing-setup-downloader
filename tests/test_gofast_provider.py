@@ -648,12 +648,15 @@ class TestBuildFilename:
 
     def test_build_filename_all_fields(self, provider, sample_setup_record):
         """Test filename with all fields present."""
-        filename = provider._build_filename(sample_setup_record, "GO_Race.sto")
+        filename, was_renamed = provider._build_filename(
+            sample_setup_record, "GO_Race.sto"
+        )
 
         assert filename == "GoFast_IMSA_26S1W8_Spa-Francorchamps_Race.sto"
         assert not filename.startswith("_")
         assert not filename.endswith("_.sto")
         assert "__" not in filename
+        assert not was_renamed  # No spaces in track name "Spa-Francorchamps"
 
     def test_build_filename_missing_series(self, provider):
         """Test filename with missing series."""
@@ -669,10 +672,11 @@ class TestBuildFilename:
             cat="GT3",
             series="",  # Missing series
         )
-        filename = provider._build_filename(setup, "setup_Qualifying.sto")
+        filename, was_renamed = provider._build_filename(setup, "setup_Qualifying.sto")
 
         assert filename == "GoFast_26S1W8_Monza_Qualifying.sto"
         assert "__" not in filename
+        assert not was_renamed  # No spaces in track name "Monza"
 
     def test_build_filename_missing_track(self, provider):
         """Test filename with missing track (unparseable download_name)."""
@@ -688,12 +692,14 @@ class TestBuildFilename:
             cat="GT3",
             series="IMSA",
         )
-        filename = provider._build_filename(setup, "setup_eR.sto")
+        filename, was_renamed = provider._build_filename(setup, "setup_eR.sto")
 
         assert "GoFast" in filename
         assert "IMSA" in filename
         assert "__" not in filename
         assert not filename.startswith("_")
+        # Track name extracted from "Unknown Format" could have space
+        # but the format is unparseable so track is empty
 
     def test_build_filename_extracts_setup_type(self, provider, sample_setup_record):
         """Test setup type extraction from original filename."""
@@ -707,7 +713,9 @@ class TestBuildFilename:
         ]
 
         for original_name, expected_type in test_cases:
-            filename = provider._build_filename(sample_setup_record, original_name)
+            filename, _was_renamed = provider._build_filename(
+                sample_setup_record, original_name
+            )
             assert filename.endswith(f"_{expected_type}.sto"), (
                 f"Expected {expected_type} in {filename} from {original_name}"
             )
@@ -726,7 +734,7 @@ class TestBuildFilename:
             cat="",
             series="",  # Empty series
         )
-        filename = provider._build_filename(setup, "setup.sto")
+        filename, _was_renamed = provider._build_filename(setup, "setup.sto")
 
         assert "__" not in filename
         assert not filename.startswith("_")
@@ -746,11 +754,52 @@ class TestBuildFilename:
             cat="",
             series="",
         )
-        filename = provider._build_filename(setup, ".sto")  # No stem
+        filename, was_renamed = provider._build_filename(setup, ".sto")  # No stem
 
         # Should at least have GoFast as creator
         assert "GoFast" in filename
         assert filename.endswith(".sto")
+        assert not was_renamed  # No spaces to sanitize
+
+    def test_build_filename_sanitizes_spaces(self, provider):
+        """Test that spaces in track names are replaced with underscores."""
+        setup = SetupRecord(
+            id=123,
+            download_name="IR - V1 - Ferrari 296 GT3 - Spa Francorchamps",  # Space in track
+            download_url="https://example.com/setup.zip",
+            creation_date="2024-01-15T10:30:00",
+            updated_date="2024-01-15T10:30:00",
+            ver="26 S1 W8",
+            setup_ver="1.0.0",
+            changelog="",
+            cat="GT3",
+            series="IMSA",
+        )
+        filename, was_renamed = provider._build_filename(setup, "setup_Race.sto")
+
+        assert " " not in filename
+        assert "Spa_Francorchamps" in filename
+        assert was_renamed  # Space was sanitized
+
+    def test_build_filename_sanitizes_series_spaces(self, provider):
+        """Test that spaces in series names are replaced with underscores."""
+        setup = SetupRecord(
+            id=123,
+            download_name="IR - V1 - Ferrari 296 GT3 - Monza",
+            download_url="https://example.com/setup.zip",
+            creation_date="2024-01-15T10:30:00",
+            updated_date="2024-01-15T10:30:00",
+            ver="26 S1 W8",
+            setup_ver="1.0.0",
+            changelog="",
+            cat="GT3",
+            series="Super GT Series",  # Space in series
+        )
+        filename, was_renamed = provider._build_filename(setup, "setup_Race.sto")
+
+        assert " " not in filename
+        assert "Super_GT_Series" in filename
+        assert was_renamed  # Space was sanitized
 
 
 class TestGoFastProviderTrackOrganization:

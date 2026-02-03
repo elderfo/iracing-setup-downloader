@@ -48,10 +48,12 @@ class ExtractResult:
     Attributes:
         extracted_files: List of paths to successfully extracted .sto files
         duplicates: List of DuplicateInfo for files skipped as duplicates
+        files_renamed: Number of files whose names were sanitized (spaces to underscores)
     """
 
     extracted_files: list[Path] = field(default_factory=list)
     duplicates: list[DuplicateInfo] = field(default_factory=list)
+    files_renamed: int = 0
 
     @property
     def total_bytes_saved(self) -> int:
