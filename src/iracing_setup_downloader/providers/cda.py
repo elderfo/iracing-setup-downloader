@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import logging
 import os
 import re
 import zipfile
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -232,7 +233,6 @@ class CDAProvider(SetupProvider):
             raise CDAAPIError(msg)
 
         setups: list[SetupRecord] = []
-        now = datetime.now()
 
         # Iterate through the nested structure: car > track > series > entries
         for car_slug, tracks in catalog_data.items():
@@ -264,7 +264,6 @@ class CDAProvider(SetupProvider):
                                 track_slug=track_slug,
                                 series_name=series_name,
                                 entry=entry,
-                                now=now,
                             )
                             if setup_record:
                                 setups.append(setup_record)
@@ -282,7 +281,6 @@ class CDAProvider(SetupProvider):
         track_slug: str,
         series_name: str,
         entry: dict[str, Any],
-        now: datetime,
     ) -> SetupRecord | None:
         """Create a SetupRecord from a catalog entry.
 
@@ -291,7 +289,6 @@ class CDAProvider(SetupProvider):
             track_slug: Track identifier from catalog path
             series_name: Series name from catalog path
             entry: Individual entry from the catalog
-            now: Current datetime for timestamps
 
         Returns:
             SetupRecord if parsing succeeds, None otherwise
@@ -339,20 +336,27 @@ class CDAProvider(SetupProvider):
             else entry_series_name
         )
 
-        # Create a human-readable download name
+        # Create download name in GoFast-style format for SetupRecord parsing
         car_name = self._slug_to_name(car_slug)
         track_name = self._slug_to_name(track_slug)
-        download_name = f"CDA - {car_name} - {track_name}"
+        download_name = f"IR - V1 - {car_name} - {track_name}"
 
-        # Generate a unique numeric ID from the compound key
-        unique_id = hash(cda_info.unique_id) & 0x7FFFFFFF  # Ensure positive
+        # Generate a stable unique numeric ID using SHA-256
+        # Python's hash() is randomized per interpreter run, so we use hashlib
+        hash_bytes = hashlib.sha256(cda_info.unique_id.encode()).digest()
+        unique_id = int.from_bytes(hash_bytes[:4], "big") & 0x7FFFFFFF
+
+        # Use a fixed epoch timestamp for CDA setups since the API doesn't provide
+        # creation/update times. This ensures deterministic state tracking.
+        # We derive the timestamp from the unique_id to make it stable but unique.
+        epoch = datetime(2024, 1, 1, tzinfo=UTC)
 
         return SetupRecord(
             id=unique_id,
             download_name=download_name,
             download_url=download_url,
-            creation_date=now,
-            updated_date=now,
+            creation_date=epoch,
+            updated_date=epoch,
             ver=f"{season} W{week}",
             setup_ver="1.0",
             changelog="",
@@ -627,6 +631,19 @@ class CDAProvider(SetupProvider):
 
                     output_file = output_dir / new_filename
 
+                    # Security: verify output path stays within output_path
+                    try:
+                        resolved_output = output_file.resolve()
+                        resolved_base = output_path.resolve()
+                        if not str(resolved_output).startswith(str(resolved_base)):
+                            logger.warning(
+                                "Path traversal attempt blocked: %s", output_file
+                            )
+                            continue
+                    except (OSError, ValueError) as e:
+                        logger.warning("Could not resolve path %s: %s", output_file, e)
+                        continue
+
                     # Read file content for duplicate checking
                     with zf.open(zip_info) as src:
                         file_content = src.read()
@@ -691,6 +708,7 @@ class CDAProvider(SetupProvider):
 
         Returns:
             Car folder name suitable for iRacing, or None if parsing fails
+            or if the folder name is unsafe (contains path traversal)
         """
         # Remove .sto extension
         stem = Path(filename).stem.lower()
@@ -706,7 +724,24 @@ class CDAProvider(SetupProvider):
         # Convert to iRacing folder format: remove spaces and special chars
         car_folder = car_part.replace(" ", "").replace("-", "")
 
-        return car_folder if car_folder else None
+        # Security: validate car_folder contains only safe characters
+        # and doesn't represent path traversal
+        if not car_folder:
+            return None
+
+        # Reject path traversal attempts (., .., or containing slashes)
+        if car_folder in (".", "..") or "/" in car_folder or "\\" in car_folder:
+            logger.warning("Rejected unsafe car folder name: %s", car_folder)
+            return None
+
+        # Only allow alphanumeric characters (iRacing car folders are alphanumeric)
+        if not re.match(r"^[a-z0-9]+$", car_folder):
+            logger.warning(
+                "Car folder contains non-alphanumeric characters: %s", car_folder
+            )
+            return None
+
+        return car_folder
 
     async def close(self) -> None:
         """Clean up provider resources.

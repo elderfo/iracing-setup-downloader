@@ -307,7 +307,7 @@ When organizing setups, the tool automatically handles companion files that are 
 
 - `series` - Racing series (IMSA, GT World Challenge, etc.)
 - `season` - Season identifier (26S1W8 = Season 26, Week 1, Session 8)
-- `track` - Track name with spaces removed
+- `track` - Track name with spaces replaced by underscores
 - `setup_type` - Type of setup (Race, Qualifying, etc.)
 
 ## State Management

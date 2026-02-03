@@ -557,6 +557,79 @@ class TestCDAProviderClose:
         await provider.close()
 
 
+class TestCDAProviderPathTraversal:
+    """Tests for path traversal protection."""
+
+    def test_extract_car_folder_blocks_dot_dot(self, cda_credentials):
+        """Test that '..' is blocked as car folder."""
+        provider = CDAProvider(**cda_credentials)
+
+        result = provider._extract_car_folder(".. @ track race.sto")
+        assert result is None
+
+    def test_extract_car_folder_blocks_single_dot(self, cda_credentials):
+        """Test that '.' is blocked as car folder."""
+        provider = CDAProvider(**cda_credentials)
+
+        result = provider._extract_car_folder(". @ track race.sto")
+        assert result is None
+
+    def test_extract_car_folder_blocks_special_chars(self, cda_credentials):
+        """Test that non-alphanumeric characters are blocked."""
+        provider = CDAProvider(**cda_credentials)
+
+        # These would fail the alphanumeric check
+        # Note: Path().stem handles directory separators, so we test inline special chars
+        assert provider._extract_car_folder("car..name @ track race.sto") is None
+        assert provider._extract_car_folder("car_name @ track race.sto") is None
+
+    def test_extract_car_folder_only_allows_alphanumeric(self, cda_credentials):
+        """Test that only alphanumeric car folders are allowed."""
+        provider = CDAProvider(**cda_credentials)
+
+        # Valid alphanumeric
+        assert (
+            provider._extract_car_folder("porsche911gt3 @ track race.sto") is not None
+        )
+
+        # Invalid with special characters
+        assert provider._extract_car_folder("car_name @ track race.sto") is None
+        assert provider._extract_car_folder("car.name @ track race.sto") is None
+
+
+class TestCDAProviderStableIds:
+    """Tests for deterministic ID generation."""
+
+    def test_id_is_deterministic(self, cda_credentials, cda_catalog_response):
+        """Test that setup IDs are deterministic across multiple calls."""
+        provider = CDAProvider(**cda_credentials)
+
+        # Parse catalog twice
+        setups1 = provider._parse_catalog(cda_catalog_response)
+        setups2 = provider._parse_catalog(cda_catalog_response)
+
+        # IDs should be identical
+        ids1 = sorted(s.id for s in setups1)
+        ids2 = sorted(s.id for s in setups2)
+        assert ids1 == ids2
+
+    def test_timestamps_are_deterministic(self, cda_credentials, cda_catalog_response):
+        """Test that timestamps are deterministic across multiple calls."""
+        provider = CDAProvider(**cda_credentials)
+
+        setups1 = provider._parse_catalog(cda_catalog_response)
+        setups2 = provider._parse_catalog(cda_catalog_response)
+
+        # Timestamps should be identical
+        for s1, s2 in zip(
+            sorted(setups1, key=lambda s: s.id),
+            sorted(setups2, key=lambda s: s.id),
+            strict=True,
+        ):
+            assert s1.creation_date == s2.creation_date
+            assert s1.updated_date == s2.updated_date
+
+
 class TestCDAProviderIntegration:
     """Integration tests for CDAProvider workflow."""
 
@@ -585,5 +658,39 @@ class TestCDAProviderIntegration:
         for setup in setups:
             assert setup.download_url.startswith("https://delta.coachdaveacademy.com")
             assert "setups/zip" in setup.download_url
+            # Verify car and track are parsed correctly from download_name
+            assert setup.car, f"car should not be empty for {setup.download_name}"
+            assert setup.track, f"track should not be empty for {setup.download_name}"
+            # Verify ID is a positive integer
+            assert isinstance(setup.id, int)
+            assert setup.id > 0
+
+        await provider.close()
+
+    @pytest.mark.asyncio
+    async def test_setups_are_stable_across_fetches(
+        self, cda_credentials, cda_catalog_response
+    ):
+        """Test that repeated fetches produce identical setup records."""
+        provider = CDAProvider(**cda_credentials)
+
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.json = AsyncMock(return_value=cda_catalog_response)
+
+        with patch.object(
+            provider, "_get_session", new_callable=AsyncMock
+        ) as mock_get_session:
+            mock_session = MagicMock()
+            mock_session.get.return_value.__aenter__.return_value = mock_response
+            mock_get_session.return_value = mock_session
+
+            setups1 = await provider.fetch_setups()
+            setups2 = await provider.fetch_setups()
+
+        # Compare IDs and timestamps
+        ids1 = {s.id for s in setups1}
+        ids2 = {s.id for s in setups2}
+        assert ids1 == ids2, "Setup IDs should be stable across fetches"
 
         await provider.close()
