@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from iracing_setup_downloader.utils import sanitize_filename
+
 if TYPE_CHECKING:
     from iracing_setup_downloader.deduplication import DuplicateDetector
     from iracing_setup_downloader.track_matcher import TrackMatcher
@@ -34,6 +36,7 @@ class OrganizeAction:
         duplicate_of: Path to the existing file if is_duplicate is True
         duplicate_deleted: Whether the duplicate source file was deleted
         companion_files_moved: Number of companion files moved/copied with this file
+        renamed: Whether the filename was sanitized (spaces replaced with underscores)
     """
 
     source: Path
@@ -49,6 +52,7 @@ class OrganizeAction:
     duplicate_of: Path | None = None
     duplicate_deleted: bool = False
     companion_files_moved: int = 0
+    renamed: bool = False
 
     @property
     def will_move(self) -> bool:
@@ -74,6 +78,7 @@ class OrganizeResult:
         duplicates_deleted: Number of duplicate source files deleted
         bytes_saved: Total bytes saved by deleting duplicates
         companion_files_moved: Total number of companion files moved/copied
+        files_renamed: Number of files whose names were sanitized (spaces to underscores)
     """
 
     total_files: int = 0
@@ -85,6 +90,7 @@ class OrganizeResult:
     duplicates_deleted: int = 0
     bytes_saved: int = 0
     companion_files_moved: int = 0
+    files_renamed: int = 0
 
     def __str__(self) -> str:
         """Return string representation of results."""
@@ -96,6 +102,8 @@ class OrganizeResult:
             base += f", Duplicates: {self.duplicates_found}"
         if self.companion_files_moved > 0:
             base += f", Companion files: {self.companion_files_moved}"
+        if self.files_renamed > 0:
+            base += f", Renamed: {self.files_renamed}"
         return base
 
 
@@ -294,6 +302,9 @@ class SetupOrganizer:
                     action.companion_files_moved = companion_count
                     result.companion_files_moved += companion_count
                     result.organized += 1
+                    # Track renamed files only on successful execution
+                    if action.renamed:
+                        result.files_renamed += 1
                     # Add newly written file to index
                     if self._duplicate_detector and action.destination:
                         self._duplicate_detector.add_to_index(action.destination)
@@ -307,6 +318,9 @@ class SetupOrganizer:
                 action.companion_files_moved = len(companion_files)
                 result.companion_files_moved += len(companion_files)
                 result.organized += 1  # Count as would-be-organized in dry run
+                # Track renamed files for dry run as well
+                if action.renamed:
+                    result.files_renamed += 1
 
         return result
 
@@ -395,7 +409,13 @@ class SetupOrganizer:
         # Convert track_dirpath to OS-native path separators
         track_subdir = match_result.track_dirpath.replace("\\", "/")
 
-        destination = output_root / action.car_folder / track_subdir / file_path.name
+        # Sanitize filename (replace spaces with underscores)
+        sanitized_filename, was_renamed = sanitize_filename(file_path.name)
+        action.renamed = was_renamed
+
+        destination = (
+            output_root / action.car_folder / track_subdir / sanitized_filename
+        )
         action.destination = destination
 
         # Check if already in correct location

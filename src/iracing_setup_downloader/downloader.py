@@ -34,6 +34,7 @@ class DownloadResult(BaseModel):
         errors: List of tuples containing failed setups and error messages
         duplicates_skipped: Number of duplicate files skipped during extraction
         bytes_saved: Total bytes saved by skipping duplicates
+        files_renamed: Number of files whose names were sanitized (spaces to underscores)
     """
 
     total_available: int = Field(..., description="Total setups available")
@@ -49,6 +50,10 @@ class DownloadResult(BaseModel):
     )
     bytes_saved: int = Field(
         default=0, description="Bytes saved by skipping duplicates"
+    )
+    files_renamed: int = Field(
+        default=0,
+        description="Files whose names were sanitized (spaces to underscores)",
     )
 
     def __str__(self) -> str:
@@ -66,6 +71,9 @@ class DownloadResult(BaseModel):
 
         if self.duplicates_skipped > 0:
             lines.append(f"Duplicates skipped: {self.duplicates_skipped}")
+
+        if self.files_renamed > 0:
+            lines.append(f"Files renamed: {self.files_renamed}")
 
         if self.errors:
             lines.append("\nErrors:")
@@ -357,6 +365,10 @@ class SetupDownloader:
                 if extract_result.duplicates:
                     result.duplicates_skipped += len(extract_result.duplicates)
                     result.bytes_saved += extract_result.total_bytes_saved
+
+                # Update files renamed statistics
+                if extract_result.files_renamed > 0:
+                    result.files_renamed += extract_result.files_renamed
 
                 # Mark as downloaded in state with file paths
                 # When all files are duplicates, use the existing duplicate paths

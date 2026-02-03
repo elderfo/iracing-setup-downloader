@@ -262,7 +262,7 @@ class GoFastProvider(SetupProvider):
                     raise GoFastDownloadError(msg) from e
 
                 # Extract ZIP file with duplicate detection
-                extracted_files, duplicates = self._extract_zip(
+                extracted_files, duplicates, files_renamed = self._extract_zip(
                     content, output_path, setup
                 )
 
@@ -279,12 +279,15 @@ class GoFastProvider(SetupProvider):
                     )
 
                 logger.info(
-                    "Successfully extracted %d files from setup %s",
+                    "Successfully extracted %d files from setup %s%s",
                     len(extracted_files),
                     setup.download_name,
+                    f" ({files_renamed} renamed)" if files_renamed > 0 else "",
                 )
                 return ExtractResult(
-                    extracted_files=extracted_files, duplicates=duplicates
+                    extracted_files=extracted_files,
+                    duplicates=duplicates,
+                    files_renamed=files_renamed,
                 )
 
         except (GoFastAuthenticationError, GoFastDownloadError):
@@ -302,18 +305,19 @@ class GoFastProvider(SetupProvider):
         self,
         setup: SetupRecord,
         original_filename: str,
-    ) -> str:
+    ) -> tuple[str, bool]:
         """Build standardized filename from setup metadata.
 
         Format: <creator>_<series>_<season>_<track>_<setup_type>.sto
         Missing sections are excluded. No leading/trailing underscores or double underscores.
+        Spaces in any component are replaced with underscores.
 
         Args:
             setup: The setup record with metadata
             original_filename: Original filename from ZIP to extract setup type
 
         Returns:
-            Standardized filename
+            Tuple of (standardized filename, whether spaces were sanitized)
         """
         # Extract setup type from original filename (last part before .sto)
         # Examples: "GO 26S1 NextGen Daytona500 Qualifying.sto" -> "Qualifying"
@@ -323,12 +327,12 @@ class GoFastProvider(SetupProvider):
         parts = original_stem.replace("_", " ").split()
         setup_type = parts[-1] if parts else ""
 
-        # Build filename components
+        # Build filename components (don't remove spaces yet - we'll track them)
         components = [
             "GoFast",  # creator
             setup.series if setup.series else "",
             setup.season if setup.season else "",
-            setup.track.replace(" ", "") if setup.track else "",
+            setup.track if setup.track else "",
             setup_type,
         ]
 
@@ -336,24 +340,32 @@ class GoFastProvider(SetupProvider):
         non_empty = [c for c in components if c]
         filename = "_".join(non_empty)
 
-        # Safety: ensure no double underscores (shouldn't happen with filter above)
+        # Track if any spaces exist before sanitizing
+        had_spaces = " " in filename
+
+        # Sanitize: replace spaces with underscores
+        filename = filename.replace(" ", "_")
+
+        # Safety: ensure no double underscores (can happen after space replacement)
         while "__" in filename:
             filename = filename.replace("__", "_")
 
         # Safety: strip leading/trailing underscores
         filename = filename.strip("_")
 
-        return f"{filename}.sto" if filename else "setup.sto"
+        result = f"{filename}.sto" if filename else "setup.sto"
+        return result, had_spaces
 
     def _extract_zip(
         self, content: bytes, output_path: Path, setup: SetupRecord
-    ) -> tuple[list[Path], list[DuplicateInfo]]:
+    ) -> tuple[list[Path], list[DuplicateInfo], int]:
         """Extract ZIP content to the output path.
 
         Extracts .sto files from the ZIP, preserving the car folder
         (first path component) and optionally organizing by track folder
         when a TrackMatcher is available. Files are renamed to follow
-        the standard naming convention.
+        the standard naming convention. Spaces in filenames are replaced
+        with underscores.
 
         When a DuplicateDetector is configured, files are checked against
         existing files before extraction. Binary duplicates are skipped.
@@ -364,13 +376,15 @@ class GoFastProvider(SetupProvider):
             setup: The setup record with metadata for filename generation
 
         Returns:
-            Tuple of (list of paths to extracted .sto files, list of DuplicateInfo)
+            Tuple of (list of extracted file paths, list of DuplicateInfo,
+            count of files that had spaces sanitized)
 
         Raises:
             GoFastDownloadError: If extraction fails
         """
         extracted_files: list[Path] = []
         duplicates: list[DuplicateInfo] = []
+        files_renamed: int = 0
 
         # Resolve track subdirectory if track matcher is available
         track_subdir = ""
@@ -433,8 +447,12 @@ class GoFastProvider(SetupProvider):
                     # Get original filename for setup type extraction
                     original_filename = path_parts[-1]
 
-                    # Build standardized filename
-                    new_filename = self._build_filename(setup, original_filename)
+                    # Build standardized filename (sanitizes spaces to underscores)
+                    new_filename, was_renamed = self._build_filename(
+                        setup, original_filename
+                    )
+                    if was_renamed:
+                        files_renamed += 1
 
                     # Build output directory: <output_path>/<car_folder>/[<track_subdir>/]
                     output_dir = output_path / car_folder
@@ -494,7 +512,7 @@ class GoFastProvider(SetupProvider):
             logger.error(msg)
             raise GoFastDownloadError(msg) from e
 
-        return extracted_files, duplicates
+        return extracted_files, duplicates, files_renamed
 
     async def close(self) -> None:
         """Clean up provider resources.
