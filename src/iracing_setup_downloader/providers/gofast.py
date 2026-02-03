@@ -11,15 +11,12 @@ from typing import TYPE_CHECKING
 
 import aiohttp
 
+from iracing_setup_downloader.deduplication import DuplicateInfo, ExtractResult
 from iracing_setup_downloader.models import SetupRecord
 from iracing_setup_downloader.providers.base import SetupProvider
 
 if TYPE_CHECKING:
-    from iracing_setup_downloader.deduplication import (
-        DuplicateDetector,
-        DuplicateInfo,
-        ExtractResult,
-    )
+    from iracing_setup_downloader.deduplication import DuplicateDetector
     from iracing_setup_downloader.track_matcher import TrackMatcher
 
 logger = logging.getLogger(__name__)
@@ -227,9 +224,6 @@ class GoFastProvider(SetupProvider):
             GoFastDownloadError: If the download, extraction fails, or no .sto files found
             GoFastAuthenticationError: If authentication fails during download
         """
-        # Import here to avoid circular import
-        from iracing_setup_downloader.deduplication import ExtractResult
-
         logger.info("Downloading setup: %s", setup.download_name)
 
         try:
@@ -375,9 +369,6 @@ class GoFastProvider(SetupProvider):
         Raises:
             GoFastDownloadError: If extraction fails
         """
-        # Import here to avoid circular import
-        from iracing_setup_downloader.deduplication import DuplicateInfo
-
         extracted_files: list[Path] = []
         duplicates: list[DuplicateInfo] = []
 
