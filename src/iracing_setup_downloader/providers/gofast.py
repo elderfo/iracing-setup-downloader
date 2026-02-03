@@ -22,20 +22,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def sanitize_filename(filename: str) -> tuple[str, bool]:
-    """Sanitize a filename by replacing spaces with underscores.
-
-    Args:
-        filename: The filename to sanitize
-
-    Returns:
-        Tuple of (sanitized filename, whether the filename was changed)
-    """
-    sanitized = filename.replace(" ", "_")
-    changed = sanitized != filename
-    return sanitized, changed
-
-
 class GoFastProviderError(Exception):
     """Base exception for GoFast provider errors."""
 

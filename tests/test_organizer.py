@@ -9,9 +9,9 @@ from iracing_setup_downloader.organizer import (
     OrganizeAction,
     OrganizeResult,
     SetupOrganizer,
-    sanitize_filename,
 )
 from iracing_setup_downloader.track_matcher import TrackMatcher
+from iracing_setup_downloader.utils import sanitize_filename
 
 
 @pytest.fixture

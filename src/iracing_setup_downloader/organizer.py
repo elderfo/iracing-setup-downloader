@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from iracing_setup_downloader.utils import sanitize_filename
+
 if TYPE_CHECKING:
     from iracing_setup_downloader.deduplication import DuplicateDetector
     from iracing_setup_downloader.track_matcher import TrackMatcher
@@ -103,20 +105,6 @@ class OrganizeResult:
         if self.files_renamed > 0:
             base += f", Renamed: {self.files_renamed}"
         return base
-
-
-def sanitize_filename(filename: str) -> tuple[str, bool]:
-    """Sanitize a filename by replacing spaces with underscores.
-
-    Args:
-        filename: The filename to sanitize
-
-    Returns:
-        Tuple of (sanitized filename, whether the filename was changed)
-    """
-    sanitized = filename.replace(" ", "_")
-    changed = sanitized != filename
-    return sanitized, changed
 
 
 class SetupOrganizer:
