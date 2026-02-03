@@ -273,7 +273,12 @@ async def _download_gofast_async(
         # Save state and hash cache
         if not dry_run:
             state.save()
-            hash_cache.save()
+            try:
+                hash_cache.save()
+            except OSError as e:
+                console.print(
+                    f"[yellow]Warning:[/yellow] Could not save hash cache: {e}"
+                )
 
         # Display results
         console.print()
@@ -576,7 +581,12 @@ def organize_setups(
 
         # Save hash cache if not dry run
         if not dry_run:
-            hash_cache.save()
+            try:
+                hash_cache.save()
+            except OSError as e:
+                console.print(
+                    f"[yellow]Warning:[/yellow] Could not save hash cache: {e}"
+                )
 
         # Display results
         _display_organize_results(result, dry_run, verbose)
