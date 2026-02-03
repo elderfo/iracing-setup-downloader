@@ -1,5 +1,7 @@
 # iRacing Setup Downloader
 
+[![CI](https://github.com/elderfo/iracing-setup-downloader/actions/workflows/ci.yml/badge.svg)](https://github.com/elderfo/iracing-setup-downloader/actions/workflows/ci.yml)
+
 A fast, efficient CLI tool for downloading iRacing setups from GoFast with intelligent caching, concurrent downloads, and smart rate limiting. Automatically organizes setups by car and track, skips already-downloaded files, and provides rich progress visualization.
 
 ## Features
@@ -506,8 +508,11 @@ Contributions are welcome! Please:
 
 1. Create a feature branch for your changes
 2. Add tests for new functionality
-3. Ensure linting and formatting pass
-4. Submit a pull request
+3. Ensure linting and formatting pass (`poetry run ruff check .` and `poetry run ruff format --check .`)
+4. Ensure all tests pass (`poetry run pytest`)
+5. Submit a pull request
+
+All pull requests are automatically validated by CI, which runs linting and tests across Python 3.11, 3.12, and 3.13.
 
 ## Support
 
