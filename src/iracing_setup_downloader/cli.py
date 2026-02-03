@@ -646,6 +646,11 @@ def _display_organize_results(
                 "Space Saved:",
                 f"[magenta]{_format_bytes(result.bytes_saved)}[/magenta]",
             )
+    if result.companion_files_moved > 0:
+        companion_label = "Companion Files:" if dry_run else "Companion Files Moved:"
+        summary_table.add_row(
+            companion_label, f"[blue]{result.companion_files_moved}[/blue]"
+        )
 
     title = "Organization Results (Dry Run)" if dry_run else "Organization Results"
     console.print(Panel(summary_table, title=title, border_style="green"))

@@ -33,6 +33,7 @@ class OrganizeAction:
         is_duplicate: Whether this file is a binary duplicate of an existing file
         duplicate_of: Path to the existing file if is_duplicate is True
         duplicate_deleted: Whether the duplicate source file was deleted
+        companion_files_moved: Number of companion files moved/copied with this file
     """
 
     source: Path
@@ -47,6 +48,7 @@ class OrganizeAction:
     is_duplicate: bool = False
     duplicate_of: Path | None = None
     duplicate_deleted: bool = False
+    companion_files_moved: int = 0
 
     @property
     def will_move(self) -> bool:
@@ -71,6 +73,7 @@ class OrganizeResult:
         duplicates_found: Number of duplicate files detected
         duplicates_deleted: Number of duplicate source files deleted
         bytes_saved: Total bytes saved by deleting duplicates
+        companion_files_moved: Total number of companion files moved/copied
     """
 
     total_files: int = 0
@@ -81,6 +84,7 @@ class OrganizeResult:
     duplicates_found: int = 0
     duplicates_deleted: int = 0
     bytes_saved: int = 0
+    companion_files_moved: int = 0
 
     def __str__(self) -> str:
         """Return string representation of results."""
@@ -90,6 +94,8 @@ class OrganizeResult:
         )
         if self.duplicates_found > 0:
             base += f", Duplicates: {self.duplicates_found}"
+        if self.companion_files_moved > 0:
+            base += f", Companion files: {self.companion_files_moved}"
         return base
 
 
@@ -145,6 +151,10 @@ class SetupOrganizer:
         "sq",
         "eq",
     }
+
+    # Companion file extensions that should be moved/copied with .sto files
+    # These are telemetry, lap data, and replay files associated with setups
+    COMPANION_EXTENSIONS = {".ld", ".ldx", ".olap", ".blap", ".rpy"}
 
     def __init__(
         self,
@@ -240,6 +250,21 @@ class SetupOrganizer:
                 ):
                     try:
                         file_size = sto_file.stat().st_size
+                        # Find and delete companion files first
+                        companion_files = self._find_companion_files(sto_file)
+                        for companion in companion_files:
+                            try:
+                                companion_size = companion.stat().st_size
+                                companion.unlink()
+                                result.bytes_saved += companion_size
+                                logger.info(
+                                    "Deleted duplicate companion: %s", companion.name
+                                )
+                            except OSError as e:
+                                logger.warning(
+                                    "Failed to delete companion %s: %s", companion, e
+                                )
+
                         sto_file.unlink()
                         action.duplicate_deleted = True
                         result.duplicates_deleted += 1
@@ -265,7 +290,9 @@ class SetupOrganizer:
             # Execute the action unless dry run
             if not dry_run and action.will_move:
                 try:
-                    self._execute_action(action, copy=copy)
+                    companion_count = self._execute_action(action, copy=copy)
+                    action.companion_files_moved = companion_count
+                    result.companion_files_moved += companion_count
                     result.organized += 1
                     # Add newly written file to index
                     if self._duplicate_detector and action.destination:
@@ -275,6 +302,10 @@ class SetupOrganizer:
                     result.failed += 1
                     logger.error("Failed to organize %s: %s", sto_file, e)
             elif action.will_move:
+                # In dry run, count potential companion files
+                companion_files = self._find_companion_files(sto_file)
+                action.companion_files_moved = len(companion_files)
+                result.companion_files_moved += len(companion_files)
                 result.organized += 1  # Count as would-be-organized in dry run
 
         return result
@@ -520,21 +551,50 @@ class SetupOrganizer:
 
         return result
 
-    def _execute_action(self, action: OrganizeAction, copy: bool = False) -> None:
+    def _find_companion_files(self, sto_file: Path) -> list[Path]:
+        """Find companion files for a .sto file.
+
+        Companion files have the same base name but different extensions
+        (e.g., .ld, .ldx, .olap, .blap, .rpy).
+
+        Args:
+            sto_file: Path to the .sto file
+
+        Returns:
+            List of companion file paths that exist
+        """
+        companions = []
+        stem = sto_file.stem
+        parent = sto_file.parent
+
+        for ext in self.COMPANION_EXTENSIONS:
+            companion = parent / f"{stem}{ext}"
+            if companion.exists():
+                companions.append(companion)
+
+        return companions
+
+    def _execute_action(self, action: OrganizeAction, copy: bool = False) -> int:
         """Execute a file organization action.
 
         Args:
             action: The action to execute
             copy: If True, copy instead of move
 
+        Returns:
+            Number of companion files moved/copied
+
         Raises:
             OSError: If the file operation fails
         """
         if not action.destination:
-            return
+            return 0
 
         # Create destination directory
         action.destination.parent.mkdir(parents=True, exist_ok=True)
+
+        # Find companion files before moving the main file
+        companion_files = self._find_companion_files(action.source)
 
         if copy:
             shutil.copy2(action.source, action.destination)
@@ -543,8 +603,30 @@ class SetupOrganizer:
             shutil.move(str(action.source), str(action.destination))
             logger.info("Moved: %s -> %s", action.source, action.destination)
 
+        # Move/copy companion files
+        companion_count = 0
+        for companion in companion_files:
+            companion_dest = action.destination.parent / companion.name
+            try:
+                if copy:
+                    shutil.copy2(companion, companion_dest)
+                    logger.info(
+                        "Copied companion: %s -> %s", companion.name, companion_dest
+                    )
+                else:
+                    shutil.move(str(companion), str(companion_dest))
+                    logger.info(
+                        "Moved companion: %s -> %s", companion.name, companion_dest
+                    )
+                companion_count += 1
+            except OSError as e:
+                logger.warning("Failed to move companion file %s: %s", companion, e)
+
+        if not copy:
             # Try to clean up empty directories
             self._cleanup_empty_dirs(action.source.parent)
+
+        return companion_count
 
     def _cleanup_empty_dirs(self, directory: Path) -> None:
         """Remove empty directories up the tree.
