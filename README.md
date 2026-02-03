@@ -183,11 +183,12 @@ The organizer:
 - Scans for `.sto` files recursively
 - Extracts track information from filenames (supports GoFast naming format)
 - Uses intelligent fuzzy matching to find the correct iRacing folder path
+- **Moves companion files** - Automatically moves associated `.ld`, `.ldx`, `.olap`, `.blap`, and `.rpy` files with each setup
 - **Detects and removes binary duplicates** - Uses SHA-256 hashing to identify files with identical content
 - Preserves car folder structure
 - Cleans up empty directories after moving files
 - Skips files already in the correct location
-- Reports space saved from duplicate removal
+- Reports space saved from duplicate removal and companion files moved
 
 ### View Help
 
@@ -249,6 +250,24 @@ This ensures:
 - **No redundant storage** - Only one copy of identical content is kept
 - **Space efficiency** - Duplicate files are removed during organization
 - **Safe operation** - Duplicates are only deleted after verifying an identical copy exists
+
+### Companion Files
+
+When organizing setups, the tool automatically handles companion files that are associated with each `.sto` setup file. These companion files share the same base name but have different extensions:
+
+| Extension | Description |
+|-----------|-------------|
+| `.ld` | Telemetry/lap data |
+| `.ldx` | Telemetry index |
+| `.olap` | Lap comparison/overlap data |
+| `.blap` | Best lap data |
+| `.rpy` | Replay file |
+
+**Behavior:**
+- When a `.sto` file is moved, all companion files with matching names are moved to the same destination
+- When a `.sto` file is copied, companion files are also copied
+- When a duplicate `.sto` is deleted, its companion files are also deleted
+- The results summary shows the total number of companion files processed
 
 ### Filename Format
 

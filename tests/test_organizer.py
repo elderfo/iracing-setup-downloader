@@ -697,3 +697,256 @@ class TestSetupOrganizerDuplicateDetection:
         # Should work normally
         assert result.organized == 1
         assert result.duplicates_found == 0
+
+
+class TestCompanionFiles:
+    """Tests for companion file handling."""
+
+    def test_find_companion_files(self, track_matcher, tmp_path):
+        """Test finding companion files for a .sto file."""
+        organizer = SetupOrganizer(track_matcher)
+
+        car_dir = tmp_path / "ferrari296gt3"
+        car_dir.mkdir()
+        sto_file = car_dir / "setup.sto"
+        sto_file.write_bytes(b"setup content")
+
+        # Create companion files
+        (car_dir / "setup.ld").write_bytes(b"lap data")
+        (car_dir / "setup.ldx").write_bytes(b"lap index")
+        (car_dir / "setup.olap").write_bytes(b"overlap")
+        (car_dir / "setup.blap").write_bytes(b"best lap")
+        (car_dir / "setup.rpy").write_bytes(b"replay")
+
+        # Create unrelated file
+        (car_dir / "other.ld").write_bytes(b"other data")
+
+        companions = organizer._find_companion_files(sto_file)
+
+        assert len(companions) == 5
+        companion_names = {c.name for c in companions}
+        assert companion_names == {
+            "setup.ld",
+            "setup.ldx",
+            "setup.olap",
+            "setup.blap",
+            "setup.rpy",
+        }
+
+    def test_find_companion_files_none_exist(self, track_matcher, tmp_path):
+        """Test finding companion files when none exist."""
+        organizer = SetupOrganizer(track_matcher)
+
+        car_dir = tmp_path / "ferrari296gt3"
+        car_dir.mkdir()
+        sto_file = car_dir / "setup.sto"
+        sto_file.write_bytes(b"setup content")
+
+        companions = organizer._find_companion_files(sto_file)
+
+        assert companions == []
+
+    def test_organize_moves_companion_files(self, track_matcher, tmp_path):
+        """Test that organizing moves companion files with .sto file."""
+        organizer = SetupOrganizer(track_matcher)
+
+        car_dir = tmp_path / "ferrari296gt3"
+        car_dir.mkdir()
+        sto_file = car_dir / "GoFast_IMSA_26S1W8_Spa_Race.sto"
+        sto_file.write_bytes(b"setup content")
+
+        # Create companion files
+        ld_file = car_dir / "GoFast_IMSA_26S1W8_Spa_Race.ld"
+        ld_file.write_bytes(b"lap data")
+        ldx_file = car_dir / "GoFast_IMSA_26S1W8_Spa_Race.ldx"
+        ldx_file.write_bytes(b"lap index")
+
+        result = organizer.organize(tmp_path, dry_run=False)
+
+        assert result.organized == 1
+        assert result.companion_files_moved == 2
+
+        # Verify files were moved
+        dest_dir = tmp_path / "ferrari296gt3" / "spa" / "gp"
+        assert (dest_dir / "GoFast_IMSA_26S1W8_Spa_Race.sto").exists()
+        assert (dest_dir / "GoFast_IMSA_26S1W8_Spa_Race.ld").exists()
+        assert (dest_dir / "GoFast_IMSA_26S1W8_Spa_Race.ldx").exists()
+
+        # Verify originals are gone
+        assert not sto_file.exists()
+        assert not ld_file.exists()
+        assert not ldx_file.exists()
+
+    def test_organize_copies_companion_files(self, track_matcher, tmp_path):
+        """Test that organizing copies companion files with .sto file when copy=True."""
+        organizer = SetupOrganizer(track_matcher)
+
+        car_dir = tmp_path / "ferrari296gt3"
+        car_dir.mkdir()
+        sto_file = car_dir / "GoFast_IMSA_26S1W8_Spa_Race.sto"
+        sto_file.write_bytes(b"setup content")
+
+        # Create companion file
+        ld_file = car_dir / "GoFast_IMSA_26S1W8_Spa_Race.ld"
+        ld_file.write_bytes(b"lap data")
+
+        result = organizer.organize(tmp_path, dry_run=False, copy=True)
+
+        assert result.organized == 1
+        assert result.companion_files_moved == 1
+
+        # Verify files were copied (destination exists)
+        dest_dir = tmp_path / "ferrari296gt3" / "spa" / "gp"
+        assert (dest_dir / "GoFast_IMSA_26S1W8_Spa_Race.sto").exists()
+        assert (dest_dir / "GoFast_IMSA_26S1W8_Spa_Race.ld").exists()
+
+        # Verify originals still exist (copy mode)
+        assert sto_file.exists()
+        assert ld_file.exists()
+
+    def test_organize_dry_run_counts_companion_files(self, track_matcher, tmp_path):
+        """Test that dry run counts companion files without moving them."""
+        organizer = SetupOrganizer(track_matcher)
+
+        car_dir = tmp_path / "ferrari296gt3"
+        car_dir.mkdir()
+        sto_file = car_dir / "GoFast_IMSA_26S1W8_Spa_Race.sto"
+        sto_file.write_bytes(b"setup content")
+
+        # Create companion files
+        (car_dir / "GoFast_IMSA_26S1W8_Spa_Race.ld").write_bytes(b"lap data")
+        (car_dir / "GoFast_IMSA_26S1W8_Spa_Race.rpy").write_bytes(b"replay")
+
+        result = organizer.organize(tmp_path, dry_run=True)
+
+        assert result.organized == 1
+        assert result.companion_files_moved == 2
+
+        # Verify action has companion count
+        action = result.actions[0]
+        assert action.companion_files_moved == 2
+
+        # Verify files weren't actually moved
+        assert sto_file.exists()
+        assert (car_dir / "GoFast_IMSA_26S1W8_Spa_Race.ld").exists()
+        assert (car_dir / "GoFast_IMSA_26S1W8_Spa_Race.rpy").exists()
+
+    def test_duplicate_deletion_removes_companion_files(self, track_matcher, tmp_path):
+        """Test that deleting duplicate .sto also deletes companion files."""
+        duplicate_detector = DuplicateDetector()
+        organizer = SetupOrganizer(track_matcher, duplicate_detector=duplicate_detector)
+
+        # Create target directory with existing file
+        car_dir = tmp_path / "ferrari296gt3"
+        track_dir = car_dir / "spa" / "gp"
+        track_dir.mkdir(parents=True)
+        existing = track_dir / "existing.sto"
+        existing.write_bytes(b"same content")
+
+        # Create source directory with duplicate and companion files
+        source_car = tmp_path / "source" / "ferrari296gt3"
+        source_car.mkdir(parents=True)
+        duplicate = source_car / "GoFast_IMSA_26S1W8_Spa_Race.sto"
+        duplicate.write_bytes(b"same content")
+
+        # Create companion files for the duplicate
+        companion_ld = source_car / "GoFast_IMSA_26S1W8_Spa_Race.ld"
+        companion_ld.write_bytes(b"lap data")
+        companion_rpy = source_car / "GoFast_IMSA_26S1W8_Spa_Race.rpy"
+        companion_rpy.write_bytes(b"replay data")
+
+        result = organizer.organize(
+            tmp_path / "source",
+            output_path=tmp_path,
+            dry_run=False,
+        )
+
+        assert result.duplicates_deleted == 1
+        # Bytes saved should include .sto + companion files
+        assert result.bytes_saved > len(b"same content")
+
+        # Verify duplicate and companions were deleted
+        assert not duplicate.exists()
+        assert not companion_ld.exists()
+        assert not companion_rpy.exists()
+
+    def test_companion_extensions_constant(self):
+        """Test that companion extensions constant has expected values."""
+        assert ".ld" in SetupOrganizer.COMPANION_EXTENSIONS
+        assert ".ldx" in SetupOrganizer.COMPANION_EXTENSIONS
+        assert ".olap" in SetupOrganizer.COMPANION_EXTENSIONS
+        assert ".blap" in SetupOrganizer.COMPANION_EXTENSIONS
+        assert ".rpy" in SetupOrganizer.COMPANION_EXTENSIONS
+
+    def test_result_str_includes_companion_files(self):
+        """Test that OrganizeResult string representation includes companion files."""
+        result = OrganizeResult(
+            total_files=10,
+            organized=5,
+            skipped=3,
+            failed=2,
+            companion_files_moved=8,
+        )
+
+        result_str = str(result)
+
+        assert "Companion files: 8" in result_str
+
+    def test_organize_all_companion_extensions(self, track_matcher, tmp_path):
+        """Test organizing with all supported companion file extensions."""
+        organizer = SetupOrganizer(track_matcher)
+
+        car_dir = tmp_path / "ferrari296gt3"
+        car_dir.mkdir()
+        sto_file = car_dir / "GoFast_IMSA_26S1W8_Spa_Race.sto"
+        sto_file.write_bytes(b"setup")
+
+        # Create all companion file types
+        for ext in SetupOrganizer.COMPANION_EXTENSIONS:
+            companion = car_dir / f"GoFast_IMSA_26S1W8_Spa_Race{ext}"
+            companion.write_bytes(f"data for {ext}".encode())
+
+        result = organizer.organize(tmp_path, dry_run=False)
+
+        assert result.companion_files_moved == 5
+
+        # Verify all files moved to destination
+        dest_dir = tmp_path / "ferrari296gt3" / "spa" / "gp"
+        assert (dest_dir / "GoFast_IMSA_26S1W8_Spa_Race.sto").exists()
+        for ext in SetupOrganizer.COMPANION_EXTENSIONS:
+            assert (dest_dir / f"GoFast_IMSA_26S1W8_Spa_Race{ext}").exists()
+
+    def test_companion_file_skipped_if_exists_at_destination(
+        self, track_matcher, tmp_path
+    ):
+        """Test that companion files are skipped if they already exist at destination."""
+        organizer = SetupOrganizer(track_matcher)
+
+        # Create source directory with setup and companion
+        car_dir = tmp_path / "ferrari296gt3"
+        car_dir.mkdir()
+        sto_file = car_dir / "GoFast_IMSA_26S1W8_Spa_Race.sto"
+        sto_file.write_bytes(b"setup content")
+        source_companion = car_dir / "GoFast_IMSA_26S1W8_Spa_Race.ld"
+        source_companion.write_bytes(b"new lap data")
+
+        # Create destination directory with existing companion file
+        dest_dir = tmp_path / "ferrari296gt3" / "spa" / "gp"
+        dest_dir.mkdir(parents=True)
+        existing_companion = dest_dir / "GoFast_IMSA_26S1W8_Spa_Race.ld"
+        existing_companion.write_bytes(b"existing lap data")
+
+        result = organizer.organize(tmp_path, dry_run=False)
+
+        assert result.organized == 1
+        # Companion should be skipped (not counted) since it exists at destination
+        assert result.companion_files_moved == 0
+
+        # Verify .sto was moved
+        assert (dest_dir / "GoFast_IMSA_26S1W8_Spa_Race.sto").exists()
+
+        # Verify existing companion was NOT overwritten
+        assert existing_companion.read_bytes() == b"existing lap data"
+
+        # Verify source companion still exists (wasn't moved)
+        assert source_companion.exists()
