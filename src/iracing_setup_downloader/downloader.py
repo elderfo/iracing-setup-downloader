@@ -303,8 +303,8 @@ class SetupDownloader:
             delay = random.uniform(self._min_delay, self._max_delay)
             await asyncio.sleep(delay)
 
-            # Download the setup
-            success = await self.download_one(setup, output_path)
+            # Download the setup (passes result for duplicate stats tracking)
+            success = await self.download_one(setup, output_path, result)
 
             # Update result
             if success:
@@ -315,7 +315,9 @@ class SetupDownloader:
             # Update progress bar
             progress.update(task_id, advance=1)
 
-    async def download_one(self, setup: SetupRecord, output_path: Path) -> bool:
+    async def download_one(
+        self, setup: SetupRecord, output_path: Path, result: DownloadResult
+    ) -> bool:
         """Download a single setup with retry logic.
 
         Attempts to download the setup ZIP and extract it with exponential
@@ -324,6 +326,7 @@ class SetupDownloader:
         Args:
             setup: Setup to download
             output_path: Base output directory (iRacing setups folder)
+            result: DownloadResult to update with duplicate statistics
 
         Returns:
             True if download was successful, False otherwise
@@ -337,32 +340,41 @@ class SetupDownloader:
                 logger.debug(
                     f"Downloading setup {setup.id} (attempt {retry_count + 1})"
                 )
-                extracted_files = await self._provider.download_setup(
-                    setup, output_path
-                )
+                extract_result = await self._provider.download_setup(setup, output_path)
 
-                # Verify files were extracted
-                if not extracted_files:
+                # Verify files were extracted (or at least duplicates were found)
+                if not extract_result.extracted_files and not extract_result.duplicates:
                     msg = "No .sto files extracted from ZIP"
                     raise FileNotFoundError(msg)
 
-                # Verify all files exist
-                for file_path in extracted_files:
+                # Verify all extracted files exist
+                for file_path in extract_result.extracted_files:
                     if not file_path.exists():
                         msg = f"Extracted file does not exist: {file_path}"
                         raise FileNotFoundError(msg)
 
+                # Update duplicate statistics
+                if extract_result.duplicates:
+                    result.duplicates_skipped += len(extract_result.duplicates)
+                    result.bytes_saved += extract_result.total_bytes_saved
+
                 # Mark as downloaded in state with all extracted file paths
+                # Note: We mark it downloaded even if all files were duplicates
                 self._state.mark_downloaded(
                     self._provider.name,
                     setup.id,
                     setup.updated_date,
-                    extracted_files,
+                    extract_result.extracted_files,
                 )
 
                 logger.info(
                     f"Successfully downloaded setup {setup.id}: "
-                    f"{len(extracted_files)} files extracted"
+                    f"{len(extract_result.extracted_files)} files extracted"
+                    + (
+                        f", {len(extract_result.duplicates)} duplicates skipped"
+                        if extract_result.duplicates
+                        else ""
+                    )
                 )
                 return True
 

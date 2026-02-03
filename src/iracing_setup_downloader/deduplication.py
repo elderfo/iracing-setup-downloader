@@ -27,6 +27,27 @@ class DuplicateInfo:
     file_size: int
 
 
+@dataclass
+class ExtractResult:
+    """Result of a setup extraction operation.
+
+    Contains both the successfully extracted files and information about
+    any duplicates that were skipped during extraction.
+
+    Attributes:
+        extracted_files: List of paths to successfully extracted .sto files
+        duplicates: List of DuplicateInfo for files skipped as duplicates
+    """
+
+    extracted_files: list[Path] = field(default_factory=list)
+    duplicates: list[DuplicateInfo] = field(default_factory=list)
+
+    @property
+    def total_bytes_saved(self) -> int:
+        """Calculate total bytes saved by skipping duplicates."""
+        return sum(d.file_size for d in self.duplicates)
+
+
 class FileHashCache:
     """Cache for SHA-256 file hashes with mtime/size validation.
 
@@ -206,7 +227,7 @@ class DuplicateDetector:
         # Build index: for duplicate hashes, keep the first path found
         for file_hash, paths in hash_to_paths.items():
             # Sort paths for deterministic behavior
-            sorted_paths = sorted(paths, key=lambda p: str(p))
+            sorted_paths = sorted(paths, key=str)
             self._hash_index[file_hash] = sorted_paths[0]
 
         logger.info(

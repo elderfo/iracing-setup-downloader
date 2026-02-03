@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from iracing_setup_downloader.deduplication import ExtractResult
 from iracing_setup_downloader.downloader import DownloadResult, SetupDownloader
 from iracing_setup_downloader.models import SetupRecord
 from iracing_setup_downloader.providers.base import SetupProvider
@@ -31,7 +32,9 @@ class MockProvider(SetupProvider):
         """Fetch setups."""
         return self._setups
 
-    async def download_setup(self, setup: SetupRecord, output_path: Path) -> list[Path]:
+    async def download_setup(
+        self, setup: SetupRecord, output_path: Path
+    ) -> ExtractResult:
         """Download a setup."""
         if self._download_delay > 0:
             await asyncio.sleep(self._download_delay)
@@ -46,7 +49,7 @@ class MockProvider(SetupProvider):
         file_path = output_dir / f"setup_{setup.id}.sto"
         output_dir.mkdir(parents=True, exist_ok=True)
         file_path.write_text("mock setup content")
-        return [file_path]
+        return ExtractResult(extracted_files=[file_path], duplicates=[])
 
     def get_auth_headers(self) -> dict[str, str]:
         """Return auth headers."""
@@ -293,8 +296,9 @@ class TestSetupDownloader:
         """Test successfully downloading a single setup."""
         provider = MockProvider()
         downloader = SetupDownloader(provider=provider, state=mock_state)
+        result = DownloadResult(total_available=1, skipped=0, downloaded=0, failed=0)
 
-        success = await downloader.download_one(sample_setup, tmp_path)
+        success = await downloader.download_one(sample_setup, tmp_path, result)
 
         assert success is True
 
@@ -321,8 +325,9 @@ class TestSetupDownloader:
         provider._fail_count = 2  # Fail twice, then succeed
 
         downloader = SetupDownloader(provider=provider, state=mock_state, max_retries=3)
+        result = DownloadResult(total_available=1, skipped=0, downloaded=0, failed=0)
 
-        success = await downloader.download_one(sample_setup, tmp_path)
+        success = await downloader.download_one(sample_setup, tmp_path, result)
 
         assert success is True
 
@@ -335,8 +340,9 @@ class TestSetupDownloader:
         provider._fail_count = 10  # Always fail
 
         downloader = SetupDownloader(provider=provider, state=mock_state, max_retries=2)
+        result = DownloadResult(total_available=1, skipped=0, downloaded=0, failed=0)
 
-        success = await downloader.download_one(sample_setup, tmp_path)
+        success = await downloader.download_one(sample_setup, tmp_path, result)
 
         assert success is False
 
@@ -348,6 +354,7 @@ class TestSetupDownloader:
         provider._download_delay = 1.0  # Long delay to allow cancellation
 
         downloader = SetupDownloader(provider=provider, state=mock_state)
+        result = DownloadResult(total_available=1, skipped=0, downloaded=0, failed=0)
 
         async def cancel_download():
             await asyncio.sleep(0.1)
@@ -358,7 +365,8 @@ class TestSetupDownloader:
 
         with pytest.raises(asyncio.CancelledError):
             await asyncio.gather(
-                downloader.download_one(sample_setup, tmp_path), cancel_download()
+                downloader.download_one(sample_setup, tmp_path, result),
+                cancel_download(),
             )
 
     async def test_concurrency_control(
@@ -377,7 +385,9 @@ class TestSetupDownloader:
 
         original_download = provider.download_setup
 
-        async def tracked_download(setup: SetupRecord, output_path: Path) -> Path:
+        async def tracked_download(
+            setup: SetupRecord, output_path: Path
+        ) -> ExtractResult:
             nonlocal concurrent_count, max_concurrent
             concurrent_count += 1
             max_concurrent = max(max_concurrent, concurrent_count)
@@ -437,7 +447,9 @@ class TestSetupDownloader:
         # Make downloads fail for setups 2 and 4
         original_download = provider.download_setup
 
-        async def selective_fail(setup: SetupRecord, output_path: Path) -> Path:
+        async def selective_fail(
+            setup: SetupRecord, output_path: Path
+        ) -> ExtractResult:
             if setup.id in [2, 4]:
                 msg = "Simulated failure"
                 raise Exception(msg)
@@ -490,13 +502,14 @@ class TestSetupDownloader:
         """Test that state is updated after successful download."""
         provider = MockProvider()
         downloader = SetupDownloader(provider=provider, state=mock_state)
+        result = DownloadResult(total_available=1, skipped=0, downloaded=0, failed=0)
 
         # Initially not downloaded
         assert not mock_state.is_downloaded(
             provider.name, sample_setup.id, sample_setup.updated_date
         )
 
-        await downloader.download_one(sample_setup, tmp_path)
+        await downloader.download_one(sample_setup, tmp_path, result)
 
         # Should be marked as downloaded
         assert mock_state.is_downloaded(
@@ -512,8 +525,9 @@ class TestSetupDownloader:
         provider._fail_count = 10
 
         downloader = SetupDownloader(provider=provider, state=mock_state, max_retries=1)
+        result = DownloadResult(total_available=1, skipped=0, downloaded=0, failed=0)
 
-        await downloader.download_one(sample_setup, tmp_path)
+        await downloader.download_one(sample_setup, tmp_path, result)
 
         # Should not be marked as downloaded
         assert not mock_state.is_downloaded(

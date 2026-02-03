@@ -32,11 +32,14 @@ def _format_bytes(size: int) -> str:
     Returns:
         Human-readable string like "1.5 MB" or "256 KB"
     """
+    size_float = float(size)
     for unit in ("B", "KB", "MB", "GB"):
-        if abs(size) < 1024:
-            return f"{size:.1f} {unit}" if unit != "B" else f"{size} {unit}"
-        size /= 1024
-    return f"{size:.1f} TB"
+        if abs(size_float) < 1024:
+            if unit == "B":
+                return f"{int(size_float)} {unit}"
+            return f"{size_float:.1f} {unit}"
+        size_float /= 1024
+    return f"{size_float:.1f} TB"
 
 
 app = typer.Typer(
