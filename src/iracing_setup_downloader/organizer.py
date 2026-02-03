@@ -249,6 +249,9 @@ class SetupOrganizer:
                             sto_file,
                             action.duplicate_of,
                         )
+                        # Remove deleted file from index to prevent stale matches
+                        if self._duplicate_detector:
+                            self._duplicate_detector.remove_from_index(sto_file)
                         # Clean up empty directories
                         self._cleanup_empty_dirs(sto_file.parent)
                     except OSError as e:

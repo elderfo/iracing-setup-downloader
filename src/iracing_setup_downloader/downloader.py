@@ -358,13 +358,21 @@ class SetupDownloader:
                     result.duplicates_skipped += len(extract_result.duplicates)
                     result.bytes_saved += extract_result.total_bytes_saved
 
-                # Mark as downloaded in state with all extracted file paths
-                # Note: We mark it downloaded even if all files were duplicates
+                # Mark as downloaded in state with file paths
+                # When all files are duplicates, use the existing duplicate paths
+                # so that is_downloaded() can still verify the setup was processed
+                files_for_state = extract_result.extracted_files
+                if not files_for_state and extract_result.duplicates:
+                    # Use the existing paths that the duplicates matched against
+                    files_for_state = [
+                        d.existing_path for d in extract_result.duplicates
+                    ]
+
                 self._state.mark_downloaded(
                     self._provider.name,
                     setup.id,
                     setup.updated_date,
-                    extract_result.extracted_files,
+                    files_for_state,
                 )
 
                 logger.info(
