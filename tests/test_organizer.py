@@ -915,3 +915,38 @@ class TestCompanionFiles:
         assert (dest_dir / "GoFast_IMSA_26S1W8_Spa_Race.sto").exists()
         for ext in SetupOrganizer.COMPANION_EXTENSIONS:
             assert (dest_dir / f"GoFast_IMSA_26S1W8_Spa_Race{ext}").exists()
+
+    def test_companion_file_skipped_if_exists_at_destination(
+        self, track_matcher, tmp_path
+    ):
+        """Test that companion files are skipped if they already exist at destination."""
+        organizer = SetupOrganizer(track_matcher)
+
+        # Create source directory with setup and companion
+        car_dir = tmp_path / "ferrari296gt3"
+        car_dir.mkdir()
+        sto_file = car_dir / "GoFast_IMSA_26S1W8_Spa_Race.sto"
+        sto_file.write_bytes(b"setup content")
+        source_companion = car_dir / "GoFast_IMSA_26S1W8_Spa_Race.ld"
+        source_companion.write_bytes(b"new lap data")
+
+        # Create destination directory with existing companion file
+        dest_dir = tmp_path / "ferrari296gt3" / "spa" / "gp"
+        dest_dir.mkdir(parents=True)
+        existing_companion = dest_dir / "GoFast_IMSA_26S1W8_Spa_Race.ld"
+        existing_companion.write_bytes(b"existing lap data")
+
+        result = organizer.organize(tmp_path, dry_run=False)
+
+        assert result.organized == 1
+        # Companion should be skipped (not counted) since it exists at destination
+        assert result.companion_files_moved == 0
+
+        # Verify .sto was moved
+        assert (dest_dir / "GoFast_IMSA_26S1W8_Spa_Race.sto").exists()
+
+        # Verify existing companion was NOT overwritten
+        assert existing_companion.read_bytes() == b"existing lap data"
+
+        # Verify source companion still exists (wasn't moved)
+        assert source_companion.exists()

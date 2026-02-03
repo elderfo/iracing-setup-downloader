@@ -608,6 +608,14 @@ class SetupOrganizer:
         for companion in companion_files:
             companion_dest = action.destination.parent / companion.name
             try:
+                # Skip if companion already exists at destination
+                if companion_dest.exists():
+                    logger.warning(
+                        "Skipping companion file %s: already exists at destination",
+                        companion.name,
+                    )
+                    continue
+
                 if copy:
                     shutil.copy2(companion, companion_dest)
                     logger.info(
