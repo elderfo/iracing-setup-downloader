@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from rich.progress import (
     BarColumn,
@@ -58,21 +60,224 @@ class ExtractResult:
 
 
 class FileHashCache:
-    """Cache for SHA-256 file hashes with mtime/size validation.
+    """Cache for SHA-256 file hashes with mtime/size validation and persistence.
 
     This cache stores file hashes and validates them based on file
     modification time and size to avoid expensive re-hashing of unchanged files.
+    The cache can be persisted to disk to survive across sessions.
 
     Attributes:
         BUFFER_SIZE: Size of read buffer for hashing large files (64KB)
+        CACHE_VERSION: Version of the cache file format for compatibility
+        DEFAULT_CACHE_PATH: Default path for the cache file
     """
 
     BUFFER_SIZE = 65536  # 64KB read buffer
+    CACHE_VERSION = 1
+    DEFAULT_CACHE_PATH = Path.home() / ".iracing-setup-downloader" / "hash_cache.json"
 
-    def __init__(self) -> None:
-        """Initialize the hash cache."""
+    def __init__(
+        self,
+        cache_file: Path | None = None,
+        auto_save: bool = False,
+    ) -> None:
+        """Initialize the hash cache.
+
+        Args:
+            cache_file: Path to the cache file. Defaults to
+                ~/.iracing-setup-downloader/hash_cache.json
+            auto_save: If True, automatically save after modifications
+        """
+        self._cache_file = (
+            cache_file if cache_file is not None else self.DEFAULT_CACHE_PATH
+        )
+        self._auto_save = auto_save
         # Cache format: {path_str: (hash, mtime_ns, size)}
         self._cache: dict[str, tuple[str, int, int]] = {}
+        self._loaded = False
+        self._modified = False
+
+    @property
+    def cache_file(self) -> Path:
+        """Get the path to the cache file.
+
+        Returns:
+            Path to the cache file
+        """
+        return self._cache_file
+
+    @property
+    def is_loaded(self) -> bool:
+        """Check if the cache has been loaded from disk.
+
+        Returns:
+            True if load() has been called, False otherwise
+        """
+        return self._loaded
+
+    def load(self) -> None:
+        """Load cache from disk.
+
+        Creates an empty cache if the file doesn't exist.
+        Skips entries with invalid data without failing the entire load.
+
+        Raises:
+            json.JSONDecodeError: If the cache file contains invalid JSON
+            OSError: If there are file system errors reading the file
+        """
+        try:
+            if self._cache_file.exists():
+                logger.info("Loading hash cache from %s", self._cache_file)
+                data = json.loads(self._cache_file.read_text(encoding="utf-8"))
+
+                # Check version for compatibility
+                version = data.get("version", 1)
+                if version > self.CACHE_VERSION:
+                    logger.warning(
+                        "Cache file version %d is newer than supported version %d, "
+                        "starting with empty cache",
+                        version,
+                        self.CACHE_VERSION,
+                    )
+                    self._cache = {}
+                    self._loaded = True
+                    return
+
+                # Load entries, skipping invalid ones
+                loaded_count = 0
+                skipped_count = 0
+                for path_str, entry in data.items():
+                    if path_str == "version":
+                        continue
+                    try:
+                        # Validate entry structure
+                        if not isinstance(entry, dict):
+                            skipped_count += 1
+                            continue
+                        file_hash = entry.get("hash")
+                        mtime_ns = entry.get("mtime_ns")
+                        size = entry.get("size")
+
+                        if not all(
+                            [
+                                isinstance(file_hash, str),
+                                isinstance(mtime_ns, int),
+                                isinstance(size, int),
+                            ]
+                        ):
+                            skipped_count += 1
+                            continue
+
+                        self._cache[path_str] = (file_hash, mtime_ns, size)
+                        loaded_count += 1
+                    except (KeyError, TypeError, ValueError):
+                        logger.debug("Skipping invalid cache entry: %s", path_str)
+                        skipped_count += 1
+                        continue
+
+                logger.info(
+                    "Loaded %d cache entries%s",
+                    loaded_count,
+                    f" (skipped {skipped_count} invalid)" if skipped_count else "",
+                )
+            else:
+                logger.info("Hash cache file doesn't exist, starting with empty cache")
+                self._cache = {}
+
+            self._loaded = True
+            self._modified = False
+
+        except json.JSONDecodeError as e:
+            logger.error("Invalid JSON in cache file %s: %s", self._cache_file, e)
+            raise
+        except OSError as e:
+            logger.error("Error reading cache file %s: %s", self._cache_file, e)
+            raise
+
+    def save(self) -> None:
+        """Save cache to disk.
+
+        Creates parent directories if they don't exist.
+        Only saves if cache has been loaded and modified.
+
+        Raises:
+            OSError: If there are file system errors writing the file
+        """
+        if not self._loaded:
+            logger.warning("Attempted to save unloaded cache, skipping")
+            return
+
+        if not self._modified:
+            logger.debug("Cache not modified, skipping save")
+            return
+
+        try:
+            # Create parent directory if it doesn't exist
+            self._cache_file.parent.mkdir(parents=True, exist_ok=True)
+
+            # Build serializable structure
+            serializable: dict[str, Any] = {"version": self.CACHE_VERSION}
+            for path_str, (file_hash, mtime_ns, size) in self._cache.items():
+                serializable[path_str] = {
+                    "hash": file_hash,
+                    "mtime_ns": mtime_ns,
+                    "size": size,
+                }
+
+            # Write with pretty formatting
+            self._cache_file.write_text(
+                json.dumps(serializable, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+            self._modified = False
+            logger.info(
+                "Saved %d cache entries to %s", len(self._cache), self._cache_file
+            )
+
+        except OSError as e:
+            logger.error("Error writing cache file %s: %s", self._cache_file, e)
+            raise
+
+    def cleanup_stale(self) -> int:
+        """Remove entries for files that no longer exist.
+
+        Returns:
+            Number of stale entries removed
+        """
+        stale_paths = []
+        for path_str in self._cache:
+            if not Path(path_str).exists():
+                stale_paths.append(path_str)
+
+        for path_str in stale_paths:
+            del self._cache[path_str]
+
+        if stale_paths:
+            self._modified = True
+            logger.info("Removed %d stale cache entries", len(stale_paths))
+
+        return len(stale_paths)
+
+    def __enter__(self) -> FileHashCache:
+        """Enter context manager, loading cache.
+
+        Returns:
+            Self for use in with statement
+        """
+        self.load()
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        """Exit context manager, saving cache.
+
+        Args:
+            exc_type: Exception type if an error occurred
+            exc_val: Exception value if an error occurred
+            exc_tb: Exception traceback if an error occurred
+        """
+        if exc_type is None:
+            # Only save if no exception occurred
+            self.save()
 
     def get_hash(self, file_path: Path) -> str:
         """Get the SHA-256 hash of a file, using cache if valid.
@@ -107,7 +312,12 @@ class FileHashCache:
 
         # Update cache
         self._cache[path_str] = (file_hash, current_mtime, current_size)
+        self._modified = True
         logger.debug("Computed hash for %s: %s", file_path.name, file_hash[:16])
+
+        # Auto-save if enabled
+        if self._auto_save and self._loaded:
+            self.save()
 
         return file_hash
 
@@ -250,10 +460,14 @@ class FileHashCache:
             file_path: Path to invalidate
         """
         path_str = str(file_path.resolve())
-        self._cache.pop(path_str, None)
+        if path_str in self._cache:
+            del self._cache[path_str]
+            self._modified = True
 
     def clear(self) -> None:
         """Clear the entire cache."""
+        if self._cache:
+            self._modified = True
         self._cache.clear()
 
 

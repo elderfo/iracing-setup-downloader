@@ -184,6 +184,311 @@ class TestFileHashCache:
         assert len(cache._cache) == 0
 
 
+class TestFileHashCachePersistence:
+    """Tests for FileHashCache persistence functionality."""
+
+    def test_save_and_load(self, tmp_path):
+        """Test saving and loading cache."""
+        cache_file = tmp_path / "cache.json"
+        test_file = tmp_path / "test.sto"
+        test_file.write_bytes(b"test content")
+
+        # Create cache, hash a file, and save
+        cache1 = FileHashCache(cache_file=cache_file)
+        cache1.load()
+        hash1 = cache1.get_hash(test_file)
+        cache1.save()
+
+        assert cache_file.exists()
+
+        # Load in a new cache instance
+        cache2 = FileHashCache(cache_file=cache_file)
+        cache2.load()
+
+        # Should have the entry
+        assert str(test_file.resolve()) in cache2._cache
+        cached_hash, _, _ = cache2._cache[str(test_file.resolve())]
+        assert cached_hash == hash1
+
+    def test_load_nonexistent_file(self, tmp_path):
+        """Test loading when cache file doesn't exist."""
+        cache_file = tmp_path / "nonexistent.json"
+        cache = FileHashCache(cache_file=cache_file)
+
+        cache.load()
+
+        assert cache.is_loaded
+        assert len(cache._cache) == 0
+
+    def test_load_skips_invalid_entries(self, tmp_path):
+        """Test that invalid entries are skipped during load."""
+        import json
+
+        cache_file = tmp_path / "cache.json"
+        data = {
+            "version": 1,
+            "/valid/path": {"hash": "abc123", "mtime_ns": 1000, "size": 100},
+            "/invalid/missing_hash": {"mtime_ns": 1000, "size": 100},
+            "/invalid/wrong_type": "not a dict",
+            "/invalid/wrong_mtime": {"hash": "abc", "mtime_ns": "not_int", "size": 100},
+        }
+        cache_file.write_text(json.dumps(data), encoding="utf-8")
+
+        cache = FileHashCache(cache_file=cache_file)
+        cache.load()
+
+        # Only the valid entry should be loaded
+        assert len(cache._cache) == 1
+        assert "/valid/path" in cache._cache
+
+    def test_load_handles_newer_version(self, tmp_path):
+        """Test that newer cache versions result in empty cache."""
+        import json
+
+        cache_file = tmp_path / "cache.json"
+        data = {
+            "version": 999,
+            "/some/path": {"hash": "abc123", "mtime_ns": 1000, "size": 100},
+        }
+        cache_file.write_text(json.dumps(data), encoding="utf-8")
+
+        cache = FileHashCache(cache_file=cache_file)
+        cache.load()
+
+        # Should start with empty cache due to version mismatch
+        assert cache.is_loaded
+        assert len(cache._cache) == 0
+
+    def test_save_creates_parent_dirs(self, tmp_path):
+        """Test that save creates parent directories."""
+        cache_file = tmp_path / "nested" / "deep" / "cache.json"
+        cache = FileHashCache(cache_file=cache_file)
+        cache.load()
+
+        # Hash a file to trigger modification
+        test_file = tmp_path / "test.sto"
+        test_file.write_bytes(b"content")
+        cache.get_hash(test_file)
+
+        cache.save()
+
+        assert cache_file.exists()
+        assert cache_file.parent.exists()
+
+    def test_save_skips_if_not_loaded(self, tmp_path):
+        """Test that save does nothing if not loaded."""
+        cache_file = tmp_path / "cache.json"
+        cache = FileHashCache(cache_file=cache_file)
+
+        cache.save()  # Should not raise
+
+        assert not cache_file.exists()
+
+    def test_save_skips_if_not_modified(self, tmp_path):
+        """Test that save skips if cache wasn't modified."""
+        import json
+
+        cache_file = tmp_path / "cache.json"
+        original_data = {
+            "version": 1,
+            "/some/path": {"hash": "abc123", "mtime_ns": 1000, "size": 100},
+        }
+        cache_file.write_text(json.dumps(original_data), encoding="utf-8")
+
+        cache = FileHashCache(cache_file=cache_file)
+        cache.load()
+
+        # Don't modify, just save
+        original_mtime = cache_file.stat().st_mtime_ns
+
+        import time
+
+        time.sleep(0.01)  # Ensure time passes
+        cache.save()
+
+        # File should not have been rewritten
+        assert cache_file.stat().st_mtime_ns == original_mtime
+
+    def test_cleanup_stale_removes_missing_files(self, tmp_path):
+        """Test cleanup_stale removes entries for missing files."""
+        cache_file = tmp_path / "cache.json"
+        test_file = tmp_path / "test.sto"
+        test_file.write_bytes(b"content")
+
+        cache = FileHashCache(cache_file=cache_file)
+        cache.load()
+        cache.get_hash(test_file)
+
+        # Delete the file
+        test_file.unlink()
+
+        # Cleanup should remove the entry
+        removed = cache.cleanup_stale()
+
+        assert removed == 1
+        assert len(cache._cache) == 0
+
+    def test_cleanup_stale_keeps_existing_files(self, tmp_path):
+        """Test cleanup_stale keeps entries for existing files."""
+        cache_file = tmp_path / "cache.json"
+        test_file = tmp_path / "test.sto"
+        test_file.write_bytes(b"content")
+
+        cache = FileHashCache(cache_file=cache_file)
+        cache.load()
+        cache.get_hash(test_file)
+
+        # File still exists
+        removed = cache.cleanup_stale()
+
+        assert removed == 0
+        assert len(cache._cache) == 1
+
+    def test_context_manager_loads_and_saves(self, tmp_path):
+        """Test context manager loads on enter and saves on exit."""
+        cache_file = tmp_path / "cache.json"
+        test_file = tmp_path / "test.sto"
+        test_file.write_bytes(b"content")
+
+        with FileHashCache(cache_file=cache_file) as cache:
+            assert cache.is_loaded
+            cache.get_hash(test_file)
+
+        # File should have been saved
+        assert cache_file.exists()
+
+    def test_context_manager_no_save_on_exception(self, tmp_path):
+        """Test context manager doesn't save if exception occurs."""
+        import json
+
+        cache_file = tmp_path / "cache.json"
+        original_data = {"version": 1}
+        cache_file.write_text(json.dumps(original_data), encoding="utf-8")
+        test_file = tmp_path / "test.sto"
+        test_file.write_bytes(b"content")
+
+        try:
+            with FileHashCache(cache_file=cache_file) as cache:
+                cache.get_hash(test_file)
+                msg = "Simulated error"
+                raise RuntimeError(msg)
+        except RuntimeError:
+            pass
+
+        # File should not have been updated with new entry
+        saved_data = json.loads(cache_file.read_text(encoding="utf-8"))
+        assert str(test_file.resolve()) not in saved_data
+
+    def test_auto_save_saves_after_modification(self, tmp_path):
+        """Test auto_save mode saves after each modification."""
+        cache_file = tmp_path / "cache.json"
+        test_file1 = tmp_path / "test1.sto"
+        test_file2 = tmp_path / "test2.sto"
+        test_file1.write_bytes(b"content1")
+        test_file2.write_bytes(b"content2")
+
+        cache = FileHashCache(cache_file=cache_file, auto_save=True)
+        cache.load()
+
+        # First hash should trigger save
+        cache.get_hash(test_file1)
+        assert cache_file.exists()
+
+        # Verify file was saved with first entry
+        import json
+
+        data = json.loads(cache_file.read_text(encoding="utf-8"))
+        assert str(test_file1.resolve()) in data
+
+    def test_invalidate_marks_modified(self, tmp_path):
+        """Test that invalidate marks cache as modified."""
+        cache_file = tmp_path / "cache.json"
+        test_file = tmp_path / "test.sto"
+        test_file.write_bytes(b"content")
+
+        cache = FileHashCache(cache_file=cache_file)
+        cache.load()
+        cache.get_hash(test_file)
+        cache._modified = False  # Reset
+
+        cache.invalidate(test_file)
+
+        assert cache._modified
+
+    def test_clear_marks_modified(self, tmp_path):
+        """Test that clear marks cache as modified."""
+        cache_file = tmp_path / "cache.json"
+        test_file = tmp_path / "test.sto"
+        test_file.write_bytes(b"content")
+
+        cache = FileHashCache(cache_file=cache_file)
+        cache.load()
+        cache.get_hash(test_file)
+        cache._modified = False  # Reset
+
+        cache.clear()
+
+        assert cache._modified
+
+    def test_cache_file_property(self, tmp_path):
+        """Test cache_file property returns correct path."""
+        cache_file = tmp_path / "cache.json"
+        cache = FileHashCache(cache_file=cache_file)
+
+        assert cache.cache_file == cache_file
+
+    def test_default_cache_path(self):
+        """Test default cache path is set correctly."""
+        cache = FileHashCache()
+
+        assert cache.cache_file == FileHashCache.DEFAULT_CACHE_PATH
+
+    def test_is_loaded_property(self, tmp_path):
+        """Test is_loaded property."""
+        cache_file = tmp_path / "cache.json"
+        cache = FileHashCache(cache_file=cache_file)
+
+        assert not cache.is_loaded
+
+        cache.load()
+
+        assert cache.is_loaded
+
+    def test_corrupted_json_raises_error(self, tmp_path):
+        """Test that corrupted JSON raises JSONDecodeError."""
+        import json
+
+        cache_file = tmp_path / "cache.json"
+        cache_file.write_text("{ invalid json }", encoding="utf-8")
+
+        cache = FileHashCache(cache_file=cache_file)
+
+        with pytest.raises(json.JSONDecodeError):
+            cache.load()
+
+    def test_cache_survives_across_sessions(self, tmp_path):
+        """Test that cache entries persist across sessions."""
+        cache_file = tmp_path / "cache.json"
+        test_file = tmp_path / "test.sto"
+        test_file.write_bytes(b"test content for persistence")
+
+        # Session 1: Create cache and hash file
+        with FileHashCache(cache_file=cache_file) as cache1:
+            hash1 = cache1.get_hash(test_file)
+
+        # Session 2: Load cache and verify hash is still cached
+        cache2 = FileHashCache(cache_file=cache_file)
+        cache2.load()
+
+        # The entry should be in cache
+        path_str = str(test_file.resolve())
+        assert path_str in cache2._cache
+
+        # Hash should match
+        cached_hash, _, _ = cache2._cache[path_str]
+        assert cached_hash == hash1
+
+
 class TestDuplicateInfo:
     """Tests for DuplicateInfo dataclass."""
 

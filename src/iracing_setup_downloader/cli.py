@@ -11,7 +11,7 @@ from rich.table import Table
 
 from iracing_setup_downloader import __version__
 from iracing_setup_downloader.config import get_settings
-from iracing_setup_downloader.deduplication import DuplicateDetector
+from iracing_setup_downloader.deduplication import DuplicateDetector, FileHashCache
 from iracing_setup_downloader.downloader import SetupDownloader
 from iracing_setup_downloader.organizer import OrganizeResult, SetupOrganizer
 from iracing_setup_downloader.providers import GoFastProvider
@@ -235,8 +235,12 @@ async def _download_gofast_async(
         dry_run: If True, don't actually download
         track_matcher: Optional TrackMatcher for track-based folder organization
     """
-    # Initialize duplicate detector and build index
-    duplicate_detector = DuplicateDetector()
+    # Initialize persistent hash cache
+    hash_cache = FileHashCache()
+    hash_cache.load()
+
+    # Initialize duplicate detector with persistent cache and build index
+    duplicate_detector = DuplicateDetector(hash_cache=hash_cache)
     if output_path.exists() and not dry_run:
         console.print("[bold]Building duplicate detection index...[/bold]")
         duplicate_detector.build_index(output_path)
@@ -266,9 +270,15 @@ async def _download_gofast_async(
         console.print("[bold]Starting download...[/bold]\n")
         result = await downloader.download_all(output_path, dry_run=dry_run)
 
-        # Save state
+        # Save state and hash cache
         if not dry_run:
             state.save()
+            try:
+                hash_cache.save()
+            except OSError as e:
+                console.print(
+                    f"[yellow]Warning:[/yellow] Could not save hash cache: {e}"
+                )
 
         # Display results
         console.print()
@@ -550,8 +560,12 @@ def organize_setups(
         console.print(config_table)
         console.print()
 
-        # Initialize duplicate detector
-        duplicate_detector = DuplicateDetector()
+        # Initialize persistent hash cache
+        hash_cache = FileHashCache()
+        hash_cache.load()
+
+        # Initialize duplicate detector with persistent cache
+        duplicate_detector = DuplicateDetector(hash_cache=hash_cache)
 
         # Create organizer and run
         organizer = SetupOrganizer(track_matcher, duplicate_detector=duplicate_detector)
@@ -564,6 +578,15 @@ def organize_setups(
             copy=copy,
             category_hint=category,
         )
+
+        # Save hash cache if not dry run
+        if not dry_run:
+            try:
+                hash_cache.save()
+            except OSError as e:
+                console.print(
+                    f"[yellow]Warning:[/yellow] Could not save hash cache: {e}"
+                )
 
         # Display results
         _display_organize_results(result, dry_run, verbose)
