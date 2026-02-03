@@ -7,6 +7,7 @@ A fast, efficient CLI tool for downloading iRacing setups from GoFast with intel
 - **Asynchronous Concurrent Downloads** - Download multiple setups in parallel with configurable concurrency limits (1-20)
 - **Smart Rate Limiting** - Configurable random delays between requests to avoid server overload
 - **Incremental Updates** - Tracks downloaded setups and skips files that haven't changed
+- **Binary Duplicate Detection** - SHA-256 based duplicate detection prevents storing identical files
 - **iRacing-Native Folder Structure** - Automatically organizes setups into iRacing's track folder paths so they appear correctly in-game
 - **Intelligent Track Matching** - Fuzzy matching with category awareness (GT3 prefers road configs, NASCAR prefers oval configs)
 - **Rich Progress Bars** - Visual feedback with download speed, count, and estimated time remaining
@@ -180,9 +181,11 @@ The organizer:
 - Scans for `.sto` files recursively
 - Extracts track information from filenames (supports GoFast naming format)
 - Uses intelligent fuzzy matching to find the correct iRacing folder path
+- **Detects and removes binary duplicates** - Uses SHA-256 hashing to identify files with identical content
 - Preserves car folder structure
 - Cleans up empty directories after moving files
 - Skips files already in the correct location
+- Reports space saved from duplicate removal
 
 ### View Help
 
@@ -225,6 +228,25 @@ The downloader automatically matches provider track names to iRacing's internal 
 - **Handles variations** - "Spa-Francorchamps", "Spa", "SPA" all match correctly
 
 If a track cannot be matched (rare), the setup falls back to a flat structure directly in the car folder.
+
+### Duplicate Detection
+
+Both the downloader and organizer include binary duplicate detection using SHA-256 hashing:
+
+**During Downloads:**
+- Before extracting a file from a ZIP, the downloader computes its SHA-256 hash
+- If an identical file (by content, not name) already exists in the output directory, the file is skipped
+- Statistics show how many duplicates were skipped and space saved
+
+**During Organization:**
+- Before moving a file, the organizer checks if an identical file exists at the destination or elsewhere in the target directory
+- When moving (not copying), duplicate source files are deleted to save space
+- The result shows duplicates found, deleted, and bytes saved
+
+This ensures:
+- **No redundant storage** - Only one copy of identical content is kept
+- **Space efficiency** - Duplicate files are removed during organization
+- **Safe operation** - Duplicates are only deleted after verifying an identical copy exists
 
 ### Filename Format
 
@@ -297,6 +319,7 @@ iracing-setup-downloader/
 │   ├── state.py                 # Download state tracking
 │   ├── downloader.py            # Download orchestration
 │   ├── organizer.py             # Existing file reorganization
+│   ├── deduplication.py         # Binary duplicate detection
 │   ├── track_matcher.py         # Track name to iRacing path matching
 │   ├── data/
 │   │   └── tracks.json          # Bundled iRacing track data

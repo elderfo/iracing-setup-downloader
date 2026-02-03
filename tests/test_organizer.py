@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from iracing_setup_downloader.deduplication import DuplicateDetector
 from iracing_setup_downloader.organizer import (
     OrganizeAction,
     OrganizeResult,
@@ -512,3 +513,187 @@ class TestSetupOrganizerEdgeCases:
         assert result.organized == 1
         # Old track folder should be cleaned up
         assert not old_track_dir.exists()
+
+
+class TestSetupOrganizerDuplicateDetection:
+    """Tests for duplicate detection in SetupOrganizer."""
+
+    @pytest.fixture
+    def organizer_with_detector(self, track_matcher):
+        """Create a SetupOrganizer with DuplicateDetector."""
+        detector = DuplicateDetector()
+        return SetupOrganizer(track_matcher, duplicate_detector=detector)
+
+    def test_detects_duplicate_at_destination(self, organizer_with_detector, tmp_path):
+        """Test detection of duplicate when destination file exists."""
+        car_dir = tmp_path / "ferrari296gt3"
+        track_dir = car_dir / "spa" / "gp"
+        track_dir.mkdir(parents=True)
+
+        # Create source file
+        source_content = b"setup content"
+        source_file = car_dir / "GoFast_IMSA_26S1W8_Spa_Race.sto"
+        source_file.write_bytes(source_content)
+
+        # Create existing destination with same content
+        dest_file = track_dir / "GoFast_IMSA_26S1W8_Spa_Race.sto"
+        dest_file.write_bytes(source_content)
+
+        result = organizer_with_detector.organize(tmp_path, dry_run=False)
+
+        # File should be skipped as duplicate
+        assert result.duplicates_found == 1
+        assert result.duplicates_deleted == 1
+        # Source should be deleted (move mode)
+        assert not source_file.exists()
+        # Destination should still exist
+        assert dest_file.exists()
+
+    def test_detects_duplicate_elsewhere_in_target(
+        self, organizer_with_detector, tmp_path
+    ):
+        """Test detection of duplicate elsewhere in target directory."""
+        car1_dir = tmp_path / "ferrari296gt3"
+        car2_dir = tmp_path / "porsche911gt3r"
+        track_dir = car1_dir / "spa" / "gp"
+        track_dir.mkdir(parents=True)
+        car2_dir.mkdir(parents=True)
+
+        # Create existing file in organized location
+        existing_content = b"existing setup"
+        existing_file = track_dir / "existing.sto"
+        existing_file.write_bytes(existing_content)
+
+        # Create source file with same content
+        source_file = car2_dir / "GoFast_IMSA_26S1W8_Spa_Race.sto"
+        source_file.write_bytes(existing_content)
+
+        result = organizer_with_detector.organize(tmp_path, dry_run=False)
+
+        # Should detect as duplicate
+        assert result.duplicates_found == 1
+        assert result.duplicates_deleted == 1
+        # Source should be deleted
+        assert not source_file.exists()
+
+    def test_duplicate_detection_dry_run(self, organizer_with_detector, tmp_path):
+        """Test duplicate detection in dry run mode."""
+        car_dir = tmp_path / "ferrari296gt3"
+        track_dir = car_dir / "spa" / "gp"
+        track_dir.mkdir(parents=True)
+
+        duplicate_content = b"same content"
+        source_file = car_dir / "GoFast_IMSA_26S1W8_Spa_Race.sto"
+        source_file.write_bytes(duplicate_content)
+        dest_file = track_dir / "GoFast_IMSA_26S1W8_Spa_Race.sto"
+        dest_file.write_bytes(duplicate_content)
+
+        result = organizer_with_detector.organize(tmp_path, dry_run=True)
+
+        # Should detect duplicate but not delete
+        assert result.duplicates_found == 1
+        assert result.duplicates_deleted == 0
+        # Source should still exist
+        assert source_file.exists()
+
+    def test_duplicate_detection_copy_mode(self, organizer_with_detector, tmp_path):
+        """Test duplicate detection in copy mode (no deletion)."""
+        car_dir = tmp_path / "ferrari296gt3"
+        track_dir = car_dir / "spa" / "gp"
+        track_dir.mkdir(parents=True)
+
+        duplicate_content = b"same content"
+        source_file = car_dir / "GoFast_IMSA_26S1W8_Spa_Race.sto"
+        source_file.write_bytes(duplicate_content)
+        dest_file = track_dir / "GoFast_IMSA_26S1W8_Spa_Race.sto"
+        dest_file.write_bytes(duplicate_content)
+
+        result = organizer_with_detector.organize(tmp_path, dry_run=False, copy=True)
+
+        # Should detect duplicate but not delete in copy mode
+        assert result.duplicates_found == 1
+        assert result.duplicates_deleted == 0
+        # Source should still exist
+        assert source_file.exists()
+
+    def test_different_content_not_duplicate(self, organizer_with_detector, tmp_path):
+        """Test that files with different content are not marked as duplicates."""
+        car_dir = tmp_path / "ferrari296gt3"
+        track_dir = car_dir / "spa" / "gp"
+        track_dir.mkdir(parents=True)
+
+        source_file = car_dir / "GoFast_IMSA_26S1W8_Spa_Race.sto"
+        source_file.write_bytes(b"new content")
+        dest_file = track_dir / "GoFast_IMSA_26S1W8_Spa_Race.sto"
+        dest_file.write_bytes(b"different content")
+
+        result = organizer_with_detector.organize(tmp_path, dry_run=False)
+
+        # Should not detect as duplicate
+        assert result.duplicates_found == 0
+        # Skipped: source (destination exists) + dest (already in correct location)
+        assert result.skipped == 2
+        # Verify source was skipped for "destination exists", not duplicate
+        source_action = next(a for a in result.actions if a.source == source_file)
+        assert not source_action.is_duplicate
+        assert "already exists" in source_action.skip_reason.lower()
+
+    def test_bytes_saved_tracking(self, organizer_with_detector, tmp_path):
+        """Test that bytes_saved is tracked correctly."""
+        car_dir = tmp_path / "ferrari296gt3"
+        track_dir = car_dir / "spa" / "gp"
+        track_dir.mkdir(parents=True)
+
+        # Create content of known size
+        content = b"x" * 1024  # 1KB
+        source_file = car_dir / "GoFast_IMSA_26S1W8_Spa_Race.sto"
+        source_file.write_bytes(content)
+        dest_file = track_dir / "GoFast_IMSA_26S1W8_Spa_Race.sto"
+        dest_file.write_bytes(content)
+
+        result = organizer_with_detector.organize(tmp_path, dry_run=False)
+
+        assert result.bytes_saved == 1024
+
+    def test_disable_duplicate_detection(self, track_matcher, tmp_path):
+        """Test that duplicate detection can be disabled."""
+        detector = DuplicateDetector()
+        organizer = SetupOrganizer(track_matcher, duplicate_detector=detector)
+
+        car_dir = tmp_path / "ferrari296gt3"
+        track_dir = car_dir / "spa" / "gp"
+        track_dir.mkdir(parents=True)
+
+        content = b"same content"
+        source_file = car_dir / "GoFast_IMSA_26S1W8_Spa_Race.sto"
+        source_file.write_bytes(content)
+        dest_file = track_dir / "GoFast_IMSA_26S1W8_Spa_Race.sto"
+        dest_file.write_bytes(content)
+
+        # Disable duplicate detection
+        result = organizer.organize(tmp_path, dry_run=False, detect_duplicates=False)
+
+        # Should not detect as duplicate
+        assert result.duplicates_found == 0
+        # Skipped: source (destination exists) + dest (already in correct location)
+        assert result.skipped == 2
+        # Source should still exist (not deleted since no duplicate detection)
+        assert source_file.exists()
+        # Verify source was NOT marked as duplicate
+        source_action = next(a for a in result.actions if a.source == source_file)
+        assert not source_action.is_duplicate
+
+    def test_organizer_without_detector(self, track_matcher, tmp_path):
+        """Test organizer works without duplicate detector."""
+        organizer = SetupOrganizer(track_matcher)  # No detector
+
+        car_dir = tmp_path / "ferrari296gt3"
+        car_dir.mkdir()
+        setup_file = car_dir / "GoFast_IMSA_26S1W8_Spa_Race.sto"
+        setup_file.write_bytes(b"content")
+
+        result = organizer.organize(tmp_path, dry_run=False)
+
+        # Should work normally
+        assert result.organized == 1
+        assert result.duplicates_found == 0

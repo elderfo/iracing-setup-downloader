@@ -32,6 +32,8 @@ class DownloadResult(BaseModel):
         downloaded: Number of setups successfully downloaded
         failed: Number of setups that failed to download
         errors: List of tuples containing failed setups and error messages
+        duplicates_skipped: Number of duplicate files skipped during extraction
+        bytes_saved: Total bytes saved by skipping duplicates
     """
 
     total_available: int = Field(..., description="Total setups available")
@@ -41,6 +43,12 @@ class DownloadResult(BaseModel):
     errors: list[tuple[str, str]] = Field(
         default_factory=list,
         description="List of (setup_id, error_message) tuples",
+    )
+    duplicates_skipped: int = Field(
+        default=0, description="Duplicate files skipped during extraction"
+    )
+    bytes_saved: int = Field(
+        default=0, description="Bytes saved by skipping duplicates"
     )
 
     def __str__(self) -> str:
@@ -55,6 +63,9 @@ class DownloadResult(BaseModel):
             f"Skipped: {self.skipped}",
             f"Failed: {self.failed}",
         ]
+
+        if self.duplicates_skipped > 0:
+            lines.append(f"Duplicates skipped: {self.duplicates_skipped}")
 
         if self.errors:
             lines.append("\nErrors:")
@@ -292,8 +303,8 @@ class SetupDownloader:
             delay = random.uniform(self._min_delay, self._max_delay)
             await asyncio.sleep(delay)
 
-            # Download the setup
-            success = await self.download_one(setup, output_path)
+            # Download the setup (passes result for duplicate stats tracking)
+            success = await self.download_one(setup, output_path, result)
 
             # Update result
             if success:
@@ -304,7 +315,9 @@ class SetupDownloader:
             # Update progress bar
             progress.update(task_id, advance=1)
 
-    async def download_one(self, setup: SetupRecord, output_path: Path) -> bool:
+    async def download_one(
+        self, setup: SetupRecord, output_path: Path, result: DownloadResult
+    ) -> bool:
         """Download a single setup with retry logic.
 
         Attempts to download the setup ZIP and extract it with exponential
@@ -313,6 +326,7 @@ class SetupDownloader:
         Args:
             setup: Setup to download
             output_path: Base output directory (iRacing setups folder)
+            result: DownloadResult to update with duplicate statistics
 
         Returns:
             True if download was successful, False otherwise
@@ -326,32 +340,49 @@ class SetupDownloader:
                 logger.debug(
                     f"Downloading setup {setup.id} (attempt {retry_count + 1})"
                 )
-                extracted_files = await self._provider.download_setup(
-                    setup, output_path
-                )
+                extract_result = await self._provider.download_setup(setup, output_path)
 
-                # Verify files were extracted
-                if not extracted_files:
+                # Verify files were extracted (or at least duplicates were found)
+                if not extract_result.extracted_files and not extract_result.duplicates:
                     msg = "No .sto files extracted from ZIP"
                     raise FileNotFoundError(msg)
 
-                # Verify all files exist
-                for file_path in extracted_files:
+                # Verify all extracted files exist
+                for file_path in extract_result.extracted_files:
                     if not file_path.exists():
                         msg = f"Extracted file does not exist: {file_path}"
                         raise FileNotFoundError(msg)
 
-                # Mark as downloaded in state with all extracted file paths
+                # Update duplicate statistics
+                if extract_result.duplicates:
+                    result.duplicates_skipped += len(extract_result.duplicates)
+                    result.bytes_saved += extract_result.total_bytes_saved
+
+                # Mark as downloaded in state with file paths
+                # When all files are duplicates, use the existing duplicate paths
+                # so that is_downloaded() can still verify the setup was processed
+                files_for_state = extract_result.extracted_files
+                if not files_for_state and extract_result.duplicates:
+                    # Use the existing paths that the duplicates matched against
+                    files_for_state = [
+                        d.existing_path for d in extract_result.duplicates
+                    ]
+
                 self._state.mark_downloaded(
                     self._provider.name,
                     setup.id,
                     setup.updated_date,
-                    extracted_files,
+                    files_for_state,
                 )
 
                 logger.info(
                     f"Successfully downloaded setup {setup.id}: "
-                    f"{len(extracted_files)} files extracted"
+                    f"{len(extract_result.extracted_files)} files extracted"
+                    + (
+                        f", {len(extract_result.duplicates)} duplicates skipped"
+                        if extract_result.duplicates
+                        else ""
+                    )
                 )
                 return True
 

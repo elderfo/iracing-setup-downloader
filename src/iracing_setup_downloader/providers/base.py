@@ -3,6 +3,7 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
 
+from iracing_setup_downloader.deduplication import ExtractResult
 from iracing_setup_downloader.models import SetupRecord
 
 
@@ -40,7 +41,9 @@ class SetupProvider(ABC):
         ...
 
     @abstractmethod
-    async def download_setup(self, setup: SetupRecord, output_path: Path) -> list[Path]:
+    async def download_setup(
+        self, setup: SetupRecord, output_path: Path
+    ) -> ExtractResult:
         """Download and extract setup files.
 
         Downloads the setup package from the provider and extracts it to the
@@ -51,7 +54,7 @@ class SetupProvider(ABC):
             output_path: Directory path where setup files should be extracted
 
         Returns:
-            List of Path objects pointing to the extracted .sto files
+            ExtractResult containing extracted file paths and duplicate info
 
         Raises:
             aiohttp.ClientError: If the download request fails

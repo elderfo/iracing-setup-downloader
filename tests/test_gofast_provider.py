@@ -389,15 +389,12 @@ class TestGoFastProvider:
             mock_session.get.return_value.__aenter__.return_value = mock_response
             mock_get_session.return_value = mock_session
 
-            result_paths = await gofast_provider.download_setup(
-                sample_setup_record, temp_dir
-            )
+            result = await gofast_provider.download_setup(sample_setup_record, temp_dir)
 
-            # Should return a list of paths
-            assert isinstance(result_paths, list)
-            assert len(result_paths) == 1
+            # Should return an ExtractResult with extracted files
+            assert len(result.extracted_files) == 1
 
-            result_path = result_paths[0]
+            result_path = result.extracted_files[0]
             assert result_path.exists()
             assert result_path.is_file()
             assert result_path.suffix == ".sto"
@@ -531,12 +528,10 @@ class TestGoFastProvider:
             mock_session.get.return_value.__aenter__.return_value = mock_response
             mock_get_session.return_value = mock_session
 
-            result_paths = await gofast_provider.download_setup(
-                sample_setup_record, temp_dir
-            )
+            result = await gofast_provider.download_setup(sample_setup_record, temp_dir)
 
             # Verify one file extracted
-            assert len(result_paths) == 1
+            assert len(result.extracted_files) == 1
 
             # Verify car directory was created
             car_dir = temp_dir / "Ferrari 488 GT3 Evo"
@@ -548,7 +543,7 @@ class TestGoFastProvider:
             assert not track_dir.exists()
 
             # Verify file is directly in car folder with standardized name
-            result_path = result_paths[0]
+            result_path = result.extracted_files[0]
             assert result_path.parent == car_dir
             # Filename should be: GoFast_<series>_<season>_<track>_<setup_type>.sto
             # From sample_setup_record: series=IMSA, season=26S1W8, track=Spa-Francorchamps
@@ -634,11 +629,10 @@ class TestGoFastProviderIntegration:
             assert len(setups) == 2
 
             # 2. Download first setup
-            result_paths = await gofast_provider.download_setup(setups[0], temp_dir)
-            assert isinstance(result_paths, list)
-            assert len(result_paths) == 1
-            assert result_paths[0].exists()
-            assert result_paths[0].read_bytes() == b"setup file content"
+            result = await gofast_provider.download_setup(setups[0], temp_dir)
+            assert len(result.extracted_files) == 1
+            assert result.extracted_files[0].exists()
+            assert result.extracted_files[0].read_bytes() == b"setup file content"
 
             # 3. Close
             await gofast_provider.close()
@@ -855,12 +849,12 @@ class TestGoFastProviderTrackOrganization:
             mock_session.get.return_value.__aenter__.return_value = mock_response
             mock_get_session.return_value = mock_session
 
-            result_paths = await provider_with_matcher.download_setup(
+            result = await provider_with_matcher.download_setup(
                 sample_setup_record, temp_dir
             )
 
-            assert len(result_paths) == 1
-            result_path = result_paths[0]
+            assert len(result.extracted_files) == 1
+            result_path = result.extracted_files[0]
 
             # Verify track subdirectory was created
             # Path should be: <temp_dir>/<car>/<track_dirpath>/<filename>
@@ -904,12 +898,10 @@ class TestGoFastProviderTrackOrganization:
             mock_session.get.return_value.__aenter__.return_value = mock_response
             mock_get_session.return_value = mock_session
 
-            result_paths = await gofast_provider.download_setup(
-                sample_setup_record, temp_dir
-            )
+            result = await gofast_provider.download_setup(sample_setup_record, temp_dir)
 
-            assert len(result_paths) == 1
-            result_path = result_paths[0]
+            assert len(result.extracted_files) == 1
+            result_path = result.extracted_files[0]
 
             # Verify flat structure (no track subdir)
             # Path should be: <temp_dir>/<car>/<filename>
@@ -965,10 +957,10 @@ class TestGoFastProviderTrackOrganization:
             mock_session.get.return_value.__aenter__.return_value = mock_response
             mock_get_session.return_value = mock_session
 
-            result_paths = await provider.download_setup(setup, temp_dir)
+            result = await provider.download_setup(setup, temp_dir)
 
-            assert len(result_paths) == 1
-            result_path = result_paths[0]
+            assert len(result.extracted_files) == 1
+            result_path = result.extracted_files[0]
 
             # Verify flat structure
             relative_path = result_path.relative_to(temp_dir)
