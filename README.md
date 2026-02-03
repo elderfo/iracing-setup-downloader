@@ -275,7 +275,23 @@ This file stores:
 
 The state file prevents re-downloading setups that haven't changed. If a setup is updated on GoFast, it will be re-downloaded automatically.
 
-**Important:** Do not manually edit the state.json file. The tool manages it automatically.
+### Hash Cache
+
+File hashes for duplicate detection are cached in:
+
+```
+~/.iracing-setup-downloader/hash_cache.json
+```
+
+This cache:
+- Stores SHA-256 hashes with file modification time and size
+- Persists across sessions for faster subsequent runs
+- Automatically invalidates entries when files are modified
+- Eliminates the need to rehash unchanged files on every run
+
+On subsequent runs, only new or modified files need to be hashed, significantly improving startup time for large collections.
+
+**Important:** Do not manually edit either state.json or hash_cache.json. The tool manages them automatically.
 
 ## Development
 
@@ -439,6 +455,19 @@ rm ~/.iracing-setup-downloader/state.json
 
 # Re-run the downloader to rebuild state
 poetry run iracing-setup-downloader download gofast
+```
+
+### Corrupted Hash Cache
+
+**Error:** "Invalid JSON in cache file" or hash cache-related errors
+
+**Solution:**
+```bash
+# Remove corrupted cache (will be rebuilt automatically)
+rm ~/.iracing-setup-downloader/hash_cache.json
+
+# The cache will be rebuilt on the next run
+poetry run iracing-setup-downloader organize ~/Documents/iRacing/setups --dry-run
 ```
 
 ## Performance Tuning
