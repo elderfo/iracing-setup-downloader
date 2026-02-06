@@ -65,7 +65,7 @@ class TracKTitanProvider(SetupProvider):
     SETUPS_ENDPOINT = "/api/v2/games/iRacing/setups"
     DOWNLOAD_URL_TEMPLATE = "/api/v2/games/iRacing/setups/{setup_id}/download"
     REQUEST_TIMEOUT = 30.0
-    DEFAULT_PAGE_LIMIT = 50
+    DEFAULT_PAGE_LIMIT = 12
     CONSUMER_ID = "trackTitan"
 
     def __init__(
@@ -186,6 +186,7 @@ class TracKTitanProvider(SetupProvider):
         params = {"page": str(page), "limit": str(self.DEFAULT_PAGE_LIMIT)}
 
         session = await self._get_session()
+        logger.debug("Fetching page %d (limit=%s) from %s", page, params["limit"], url)
         async with session.get(
             url,
             headers=self.get_auth_headers(),
