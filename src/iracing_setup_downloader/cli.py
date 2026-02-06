@@ -14,7 +14,11 @@ from iracing_setup_downloader.config import get_settings
 from iracing_setup_downloader.deduplication import DuplicateDetector, FileHashCache
 from iracing_setup_downloader.downloader import SetupDownloader
 from iracing_setup_downloader.organizer import OrganizeResult, SetupOrganizer
-from iracing_setup_downloader.providers import CDAProvider, GoFastProvider
+from iracing_setup_downloader.providers import (
+    CDAProvider,
+    GoFastProvider,
+    TracKTitanProvider,
+)
 from iracing_setup_downloader.providers.cda import (
     CDAAuthenticationError,
     CDAProviderError,
@@ -22,6 +26,10 @@ from iracing_setup_downloader.providers.cda import (
 from iracing_setup_downloader.providers.gofast import (
     GoFastAuthenticationError,
     GoFastProviderError,
+)
+from iracing_setup_downloader.providers.tracktitan import (
+    TracKTitanAuthenticationError,
+    TracKTitanProviderError,
 )
 from iracing_setup_downloader.state import DownloadState
 from iracing_setup_downloader.track_matcher import TrackMatcher
@@ -809,6 +817,365 @@ async def _list_cda_async(session_id: str, csrf_token: str) -> None:
         )
         raise typer.Exit(code=1) from e
     except CDAProviderError as e:
+        console.print(f"[red]Provider Error:[/red] {e}")
+        raise typer.Exit(code=1) from e
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise
+    finally:
+        await provider.close()
+
+
+@download_app.command("tracktitan")
+def download_tracktitan(
+    access_token: str | None = typer.Option(
+        None,
+        "--access-token",
+        "-t",
+        help="Track Titan access token (overrides env var)",
+        envvar="TT_ACCESS_TOKEN",
+    ),
+    user_id: str | None = typer.Option(
+        None,
+        "--user-id",
+        "-u",
+        help="Track Titan user UUID (overrides env var)",
+        envvar="TT_USER_ID",
+    ),
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Output directory path (overrides env var)",
+        envvar="OUTPUT_PATH",
+    ),
+    max_concurrent: int | None = typer.Option(
+        None,
+        "--max-concurrent",
+        help="Maximum number of parallel downloads",
+        min=1,
+        max=20,
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show what would be downloaded without downloading",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        help="Enable verbose logging",
+    ),
+) -> None:
+    """Download setups from Track Titan provider.
+
+    Requires Track Titan authentication credentials:
+    - Access token (AWS Cognito JWT)
+    - User ID (UUID)
+
+    Both can be obtained from browser developer tools while logged into Track Titan.
+
+    Example:
+        iracing-setup-downloader download tracktitan --access-token eyJ... --user-id abc-123
+    """
+    setup_logging(verbose)
+
+    try:
+        # Load settings from config
+        settings = get_settings()
+
+        # Override settings with CLI arguments
+        if access_token:
+            settings.tt_access_token = access_token
+        if user_id:
+            settings.tt_user_id = user_id
+        if output:
+            settings.output_path = output
+        if max_concurrent is not None:
+            settings.max_concurrent = max_concurrent
+
+        # Validate credentials
+        if not settings.tt_access_token:
+            console.print(
+                "[red]Error:[/red] Track Titan access token is required. "
+                "Provide via --access-token flag or TT_ACCESS_TOKEN environment variable."
+            )
+            raise typer.Exit(code=1)
+
+        if not settings.tt_user_id:
+            console.print(
+                "[red]Error:[/red] Track Titan user ID is required. "
+                "Provide via --user-id flag or TT_USER_ID environment variable."
+            )
+            raise typer.Exit(code=1)
+
+        # Display configuration
+        config_table = Table(title="Configuration", show_header=False, box=None)
+        config_table.add_row("Provider:", "[cyan]Track Titan[/cyan]")
+        config_table.add_row("Output Path:", str(settings.output_path))
+        config_table.add_row("Max Concurrent:", str(settings.max_concurrent))
+        config_table.add_row("Dry Run:", "[yellow]Yes[/yellow]" if dry_run else "No")
+        console.print(config_table)
+        console.print()
+
+        # Initialize track matcher
+        track_matcher = TrackMatcher(settings.tracks_data_path)
+        try:
+            track_matcher.load()
+        except FileNotFoundError as e:
+            console.print(f"[yellow]Warning:[/yellow] Could not load tracks data: {e}")
+            console.print(
+                "[yellow]Track-based folder organization will be disabled.[/yellow]"
+            )
+            track_matcher = None
+
+        # Run async download
+        asyncio.run(
+            _download_tracktitan_async(
+                settings.tt_access_token,
+                settings.tt_user_id,
+                settings.output_path,
+                settings.max_concurrent,
+                settings.min_delay,
+                settings.max_delay,
+                settings.max_retries,
+                dry_run,
+                track_matcher,
+            )
+        )
+
+    except typer.Exit:
+        raise
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Download cancelled by user.[/yellow]")
+        raise typer.Exit(code=130) from None
+    except Exception as e:
+        console.print(f"[red]Unexpected error:[/red] {e}")
+        if verbose:
+            console.print_exception()
+        raise typer.Exit(code=1) from e
+
+
+async def _download_tracktitan_async(
+    access_token: str,
+    user_id: str,
+    output_path: Path,
+    max_concurrent: int,
+    min_delay: float,
+    max_delay: float,
+    max_retries: int,
+    dry_run: bool,
+    track_matcher: TrackMatcher | None = None,
+) -> None:
+    """Async implementation of Track Titan download.
+
+    Args:
+        access_token: Track Titan AWS Cognito access token
+        user_id: Track Titan user UUID
+        output_path: Directory to save setups
+        max_concurrent: Maximum parallel downloads
+        min_delay: Minimum delay between downloads
+        max_delay: Maximum delay between downloads
+        max_retries: Maximum retry attempts
+        dry_run: If True, don't actually download
+        track_matcher: Optional TrackMatcher for track-based folder organization
+    """
+    # Initialize persistent hash cache
+    hash_cache = FileHashCache()
+    hash_cache.load()
+
+    # Initialize duplicate detector with persistent cache and build index
+    duplicate_detector = DuplicateDetector(hash_cache=hash_cache)
+    if output_path.exists() and not dry_run:
+        console.print("[bold]Building duplicate detection index...[/bold]")
+        duplicate_detector.build_index(output_path)
+
+    provider = TracKTitanProvider(
+        access_token=access_token,
+        user_id=user_id,
+        track_matcher=track_matcher,
+        duplicate_detector=duplicate_detector if not dry_run else None,
+    )
+
+    try:
+        # Create and load state
+        state = DownloadState()
+        state.load()
+
+        # Create downloader
+        downloader = SetupDownloader(
+            provider=provider,
+            state=state,
+            max_concurrent=max_concurrent,
+            min_delay=min_delay,
+            max_delay=max_delay,
+            max_retries=max_retries,
+        )
+
+        # Download all setups
+        console.print("[bold]Starting download...[/bold]\n")
+        result = await downloader.download_all(output_path, dry_run=dry_run)
+
+        # Save state and hash cache
+        if not dry_run:
+            state.save()
+            try:
+                hash_cache.save()
+            except OSError as e:
+                console.print(
+                    f"[yellow]Warning:[/yellow] Could not save hash cache: {e}"
+                )
+
+        # Display results
+        console.print()
+        _display_download_results(result, dry_run)
+
+    except TracKTitanAuthenticationError as e:
+        console.print(f"[red]Authentication Error:[/red] {e}")
+        console.print(
+            "\n[yellow]Hint:[/yellow] Check that your Track Titan access token and "
+            "user ID are valid. You can obtain them from browser developer tools "
+            "while logged into Track Titan."
+        )
+        raise typer.Exit(code=1) from e
+    except TracKTitanProviderError as e:
+        console.print(f"[red]Provider Error:[/red] {e}")
+        raise typer.Exit(code=1) from e
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {e}")
+        raise
+    finally:
+        await provider.close()
+
+
+@list_app.command("tracktitan")
+def list_tracktitan(
+    access_token: str | None = typer.Option(
+        None,
+        "--access-token",
+        "-t",
+        help="Track Titan access token (overrides env var)",
+        envvar="TT_ACCESS_TOKEN",
+    ),
+    user_id: str | None = typer.Option(
+        None,
+        "--user-id",
+        "-u",
+        help="Track Titan user UUID (overrides env var)",
+        envvar="TT_USER_ID",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        help="Enable verbose logging",
+    ),
+) -> None:
+    """List available setups from Track Titan provider.
+
+    Requires Track Titan authentication credentials:
+    - Access token (AWS Cognito JWT)
+    - User ID (UUID)
+
+    Example:
+        iracing-setup-downloader list tracktitan --access-token eyJ... --user-id abc-123
+    """
+    setup_logging(verbose)
+
+    try:
+        # Load settings from config
+        settings = get_settings()
+
+        # Override settings with CLI arguments
+        if access_token:
+            settings.tt_access_token = access_token
+        if user_id:
+            settings.tt_user_id = user_id
+
+        # Validate credentials
+        if not settings.tt_access_token:
+            console.print(
+                "[red]Error:[/red] Track Titan access token is required. "
+                "Provide via --access-token flag or TT_ACCESS_TOKEN environment variable."
+            )
+            raise typer.Exit(code=1)
+
+        if not settings.tt_user_id:
+            console.print(
+                "[red]Error:[/red] Track Titan user ID is required. "
+                "Provide via --user-id flag or TT_USER_ID environment variable."
+            )
+            raise typer.Exit(code=1)
+
+        # Run async list
+        asyncio.run(
+            _list_tracktitan_async(settings.tt_access_token, settings.tt_user_id)
+        )
+
+    except typer.Exit:
+        raise
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Cancelled by user.[/yellow]")
+        raise typer.Exit(code=130) from None
+    except Exception as e:
+        console.print(f"[red]Unexpected error:[/red] {e}")
+        if verbose:
+            console.print_exception()
+        raise typer.Exit(code=1) from e
+
+
+async def _list_tracktitan_async(access_token: str, user_id: str) -> None:
+    """Async implementation of Track Titan list.
+
+    Args:
+        access_token: Track Titan AWS Cognito access token
+        user_id: Track Titan user UUID
+    """
+    provider = TracKTitanProvider(access_token=access_token, user_id=user_id)
+
+    try:
+        # Fetch setups
+        console.print("[bold]Fetching setups from Track Titan...[/bold]\n")
+        setups = await provider.fetch_setups()
+
+        if not setups:
+            console.print("[yellow]No setups found.[/yellow]")
+            return
+
+        # Create table
+        table = Table(
+            title=f"Available Track Titan Setups ({len(setups)} total)",
+            show_header=True,
+            header_style="bold cyan",
+        )
+        table.add_column("ID", style="dim", width=10)
+        table.add_column("Car", style="cyan", no_wrap=False)
+        table.add_column("Track", style="green", no_wrap=False)
+        table.add_column("Series", style="yellow")
+        table.add_column("Season", style="magenta")
+        table.add_column("Updated", style="blue")
+
+        # Add rows
+        for setup in setups:
+            table.add_row(
+                str(setup.id),
+                setup.car or "N/A",
+                setup.track or "N/A",
+                setup.series,
+                setup.season,
+                setup.updated_date.strftime("%Y-%m-%d %H:%M"),
+            )
+
+        console.print(table)
+
+    except TracKTitanAuthenticationError as e:
+        console.print(f"[red]Authentication Error:[/red] {e}")
+        console.print(
+            "\n[yellow]Hint:[/yellow] Check that your Track Titan access token and "
+            "user ID are valid. You can obtain them from browser developer tools "
+            "while logged into Track Titan."
+        )
+        raise typer.Exit(code=1) from e
+    except TracKTitanProviderError as e:
         console.print(f"[red]Provider Error:[/red] {e}")
         raise typer.Exit(code=1) from e
     except Exception as e:

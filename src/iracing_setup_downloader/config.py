@@ -40,6 +40,16 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("cda_csrf_token"),
         description="CDA x-elle-csrf-token header for API authentication",
     )
+    tt_access_token: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("tt_access_token"),
+        description="Track Titan AWS Cognito access token for API authentication",
+    )
+    tt_user_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("tt_user_id"),
+        description="Track Titan user UUID for API requests",
+    )
     output_path: Path = Field(
         default=Path.home() / "Documents" / "iRacing" / "setups",
         validation_alias=AliasChoices("output_path", "iracing_setups_path"),
