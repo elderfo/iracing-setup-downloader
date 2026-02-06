@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/elderfo/iracing-setup-downloader/actions/workflows/ci.yml/badge.svg)](https://github.com/elderfo/iracing-setup-downloader/actions/workflows/ci.yml)
 
-A fast, efficient CLI tool for downloading iRacing setups from GoFast and Coach Dave Academy (CDA) with intelligent caching, concurrent downloads, and smart rate limiting. Automatically organizes setups by car and track, skips already-downloaded files, and provides rich progress visualization.
+A fast, efficient CLI tool for downloading iRacing setups from GoFast, Coach Dave Academy (CDA), and Track Titan with intelligent caching, concurrent downloads, and smart rate limiting. Automatically organizes setups by car and track, skips already-downloaded files, and provides rich progress visualization.
 
 ## Features
 
@@ -68,6 +68,10 @@ GOFAST_TOKEN=your_token_here
 CDA_SESSION_ID=your_phpsessid_cookie
 CDA_CSRF_TOKEN=your_csrf_token
 
+# Track Titan Authentication (required for Track Titan)
+TT_ACCESS_TOKEN=your_cognito_jwt_token
+TT_USER_ID=your_user_uuid
+
 # Directory for downloaded setups (optional, defaults to ~/Documents/iRacing/setups)
 IRACING_SETUPS_PATH=~/Documents/iRacing/setups
 
@@ -88,6 +92,8 @@ MAX_RETRIES=3          # Retry attempts for failed downloads
 | `GOFAST_TOKEN` | Required for GoFast | - | GoFast API bearer token |
 | `CDA_SESSION_ID` | Required for CDA | - | CDA PHPSESSID cookie |
 | `CDA_CSRF_TOKEN` | Required for CDA | - | CDA x-elle-csrf-token header |
+| `TT_ACCESS_TOKEN` | Required for Track Titan | - | Track Titan AWS Cognito JWT token |
+| `TT_USER_ID` | Required for Track Titan | - | Track Titan user UUID |
 | `IRACING_SETUPS_PATH` | `~/Documents/iRacing/setups` | - | Directory to save setups |
 | `MAX_CONCURRENT` | 5 | 1-20 | Parallel download limit |
 | `MIN_DELAY` | 0.5 | >= 0 | Minimum delay between downloads (seconds) |
@@ -119,6 +125,19 @@ MAX_RETRIES=3          # Retry attempts for failed downloads
 
 **Note:** CDA credentials may expire and need to be refreshed periodically by logging in again.
 
+### Getting Your Track Titan Credentials
+
+1. Visit Track Titan (https://tracktitan.io) in your browser
+2. Log in to your Track Titan account
+3. Open Developer Tools (F12 or Ctrl+Shift+I)
+4. Navigate to the Network tab and reload the page
+5. Look for requests to `services.tracktitan.io`
+6. From the request headers, copy:
+   - The `authorization` header value (AWS Cognito JWT token) to `TT_ACCESS_TOKEN`
+   - The `x-user-id` header value (UUID) to `TT_USER_ID`
+
+**Note:** Track Titan uses AWS Cognito tokens which expire periodically. You will need to refresh credentials by logging in again when they expire.
+
 ## Usage
 
 ### List Available Setups
@@ -131,6 +150,9 @@ poetry run iracing-setup-downloader list gofast
 
 # List CDA setups
 poetry run iracing-setup-downloader list cda
+
+# List Track Titan setups
+poetry run iracing-setup-downloader list tracktitan
 ```
 
 This displays:
@@ -151,6 +173,9 @@ poetry run iracing-setup-downloader download gofast
 
 # Download from Coach Dave Academy
 poetry run iracing-setup-downloader download cda
+
+# Download from Track Titan
+poetry run iracing-setup-downloader download tracktitan
 ```
 
 The tool will:
@@ -169,6 +194,9 @@ poetry run iracing-setup-downloader download gofast --dry-run
 
 # CDA dry run
 poetry run iracing-setup-downloader download cda --dry-run
+
+# Track Titan dry run
+poetry run iracing-setup-downloader download tracktitan --dry-run
 ```
 
 Useful for:
@@ -184,6 +212,7 @@ Specify a non-default download directory:
 ```bash
 poetry run iracing-setup-downloader download gofast --output ./my-setups
 poetry run iracing-setup-downloader download cda --output ~/Downloads/iRacing
+poetry run iracing-setup-downloader download tracktitan --output ~/Downloads/iRacing
 ```
 
 ### Organize Existing Setups
@@ -224,8 +253,10 @@ The organizer:
 poetry run iracing-setup-downloader --help
 poetry run iracing-setup-downloader download gofast --help
 poetry run iracing-setup-downloader download cda --help
+poetry run iracing-setup-downloader download tracktitan --help
 poetry run iracing-setup-downloader list gofast --help
 poetry run iracing-setup-downloader list cda --help
+poetry run iracing-setup-downloader list tracktitan --help
 poetry run iracing-setup-downloader organize --help
 ```
 
@@ -305,7 +336,9 @@ When organizing setups, the tool automatically handles companion files that are 
 
 **CDA:** Setups are named: `CDA_<series>_<season>_<track>_<setup_type>.sto`
 
-- `series` - Racing series (IMSA, GT World Challenge, etc.)
+**Track Titan:** Setups are named: `TT_<series>_<season>_<track>_<setup_type>.sto`
+
+- `series` - Racing series (IMSA, GT World Challenge, PCC, etc.)
 - `season` - Season identifier (26S1W8 = Season 26, Week 1, Session 8)
 - `track` - Track name with spaces replaced by underscores
 - `setup_type` - Type of setup (Race, Qualifying, etc.)
@@ -396,7 +429,8 @@ iracing-setup-downloader/
 │       ├── base.py              # Provider interface
 │       ├── __init__.py
 │       ├── gofast.py            # GoFast provider implementation
-│       └── cda.py               # Coach Dave Academy provider
+│       ├── cda.py               # Coach Dave Academy provider
+│       └── tracktitan.py        # Track Titan provider
 ├── tests/                       # Test suite
 ├── pyproject.toml              # Poetry configuration
 ├── .env.example                # Configuration template
@@ -427,6 +461,7 @@ iracing-setup-downloader/
 - Base interface for consistent provider behavior
 - GoFast provider for fetching and downloading setups
 - CDA provider for Coach Dave Academy setups
+- Track Titan provider for Track Titan setups
 
 **Downloader** (`downloader.py`) - Download orchestration
 - Concurrent download management
@@ -471,6 +506,16 @@ See `providers/gofast.py` for an example implementation.
 - Log in to CDA Delta again to refresh your session
 - Re-extract the PHPSESSID cookie and csrf-token header
 - CDA sessions expire after inactivity, so you may need to refresh periodically
+
+### Track Titan Authentication Failed
+
+**Error:** "Authentication failed: Invalid or expired access token"
+
+**Solution:**
+- Verify both `TT_ACCESS_TOKEN` and `TT_USER_ID` are set in `.env`
+- Log in to Track Titan again to refresh your AWS Cognito session
+- Re-extract the `authorization` and `x-user-id` headers from browser DevTools
+- Cognito tokens have a limited lifespan and will need periodic refresh
 
 ### Connection Timeout
 
