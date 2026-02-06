@@ -267,8 +267,8 @@ class TestTracKTitanProviderParseResponse:
         )
         assert has_more is True
 
-    def test_parse_setups_skips_inactive(self, tt_credentials):
-        """Test that inactive setups are skipped."""
+    def test_parse_setups_includes_inactive(self, tt_credentials):
+        """Test that inactive setups are included."""
         provider = TracKTitanProvider(**tt_credentials)
         setups, _ = provider._parse_setups_response(
             {
@@ -295,12 +295,18 @@ class TestTracKTitanProviderParseResponse:
                             "id": "uuid-2",
                             "title": "Inactive Setup",
                             "config": [
-                                {"gameId": "iRacing", "carId": "car", "trackId": "trk"}
+                                {
+                                    "gameId": "iRacing",
+                                    "carId": "car2",
+                                    "trackId": "trk2",
+                                }
                             ],
-                            "setupCombos": [],
-                            "period": {},
-                            "hymoSeries": {},
-                            "hymoDriver": {},
+                            "setupCombos": [
+                                {"car": {"name": "Car2"}, "track": {"name": "Track2"}}
+                            ],
+                            "period": {"season": "1", "week": "1", "year": 2026},
+                            "hymoSeries": {"seriesName": "PCC"},
+                            "hymoDriver": {"driverName": "Test"},
                             "lastUpdatedAt": 1770000000000,
                             "isActive": False,
                         },
@@ -308,7 +314,7 @@ class TestTracKTitanProviderParseResponse:
                 },
             }
         )
-        assert len(setups) == 1
+        assert len(setups) == 2
 
 
 class TestTracKTitanProviderFetchSetups:

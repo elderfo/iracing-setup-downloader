@@ -293,11 +293,6 @@ class TracKTitanProvider(SetupProvider):
             logger.warning("Missing setup ID, skipping")
             return None
 
-        # Only process active setups
-        if not item.get("isActive", True):
-            logger.debug("Skipping inactive setup: %s", setup_id)
-            return None
-
         # Extract config (car/track)
         config = item.get("config", [])
         if not config:
