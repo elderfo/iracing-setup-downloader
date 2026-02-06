@@ -339,7 +339,7 @@ When organizing setups, the tool automatically handles companion files that are 
 **Track Titan:** Setups are named: `TT_<series>_<season>_<track>_<setup_type>.sto`
 
 - `series` - Racing series (IMSA, GT World Challenge, PCC, etc.)
-- `season` - Season identifier (26S1W8 = Season 26, Week 1, Session 8)
+- `season` - Season identifier (26S1W8 = Year 26, Season 1, Week 8)
 - `track` - Track name with spaces replaced by underscores
 - `setup_type` - Type of setup (Race, Qualifying, etc.)
 

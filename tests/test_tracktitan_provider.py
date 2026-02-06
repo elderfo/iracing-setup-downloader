@@ -128,6 +128,13 @@ class TestTracKTitanProvider:
         result = provider._extract_car_folder("mx5 @ bathurst CR.sto")
         assert result == "mx5"
 
+    def test_extract_car_folder_multi_token(self, tt_credentials):
+        """Test extracting car folder uses first token from multi-token shorthand."""
+        provider = TracKTitanProvider(**tt_credentials)
+
+        result = provider._extract_car_folder("mx5 mx52016 @ bathurst CR.sto")
+        assert result == "mx5"
+
     def test_extract_car_folder_no_at_symbol(self, tt_credentials):
         """Test extracting car folder returns None without @ symbol."""
         provider = TracKTitanProvider(**tt_credentials)
@@ -204,7 +211,7 @@ class TestTracKTitanProviderParseResponse:
         setups, _ = provider._parse_setups_response(tt_setups_response)
 
         for setup in setups:
-            assert "2026S1" in setup.ver
+            assert "26S1" in setup.ver
             assert "W8" in setup.ver
 
     def test_parse_setups_invalid_response_type(self, tt_credentials):

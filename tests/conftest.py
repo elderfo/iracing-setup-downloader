@@ -295,7 +295,7 @@ def tt_setup_record_data():
         "download_url": "https://services.tracktitan.io/api/v2/games/iRacing/setups/f28c1355-b9a6-4a6b-8fc7-02afed6fd47d/download",
         "creation_date": datetime(2026, 2, 2, 2, 43, 9, tzinfo=UTC),
         "updated_date": datetime(2026, 2, 2, 2, 43, 9, tzinfo=UTC),
-        "ver": "2026S1 W8",
+        "ver": "26S1 W8",
         "setup_ver": "1.0",
         "changelog": "",
         "cat": "PCC",

@@ -357,8 +357,9 @@ class TracKTitanProvider(SetupProvider):
         hash_bytes = hashlib.sha256(tt_info.unique_id.encode()).digest()
         unique_id = int.from_bytes(hash_bytes[:4], "big") & 0x7FFFFFFF
 
-        # Build season/version string
-        ver = f"{year}S{season} W{week}" if all([year, season, week]) else ""
+        # Build season/version string using 2-digit year for consistency
+        short_year = str(year)[-2:] if year else ""
+        ver = f"{short_year}S{season} W{week}" if all([year, season, week]) else ""
 
         # Parse lastUpdatedAt (unix ms timestamp)
         last_updated_ms = item.get("lastUpdatedAt")
@@ -682,7 +683,7 @@ class TracKTitanProvider(SetupProvider):
                     try:
                         resolved_output = output_file.resolve()
                         resolved_base = output_path.resolve()
-                        if not str(resolved_output).startswith(str(resolved_base)):
+                        if not resolved_output.is_relative_to(resolved_base):
                             logger.warning(
                                 "Path traversal attempt blocked: %s", output_file
                             )
@@ -759,9 +760,12 @@ class TracKTitanProvider(SetupProvider):
         stem = Path(filename).stem.lower()
 
         # Try "car @ track setuptype.sto" pattern
+        # car_shorthand may list multiple folder names (e.g., "mx5 mx52016"),
+        # use the first token as the actual iRacing car folder
         if " @ " in stem:
             car_part = stem.split(" @ ")[0].strip()
-            car_folder = car_part.replace(" ", "").replace("-", "")
+            tokens = car_part.split()
+            car_folder = tokens[0].replace("-", "") if tokens else ""
         else:
             return None
 
