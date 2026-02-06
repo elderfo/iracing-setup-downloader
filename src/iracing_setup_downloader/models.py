@@ -87,15 +87,19 @@ class SetupRecord(BaseModel):
         """
         # Pattern: "IR - V1 - <Car Name> - <Track Name>"
         # We want to extract <Car Name>
-        pattern = r"^IR\s*-\s*V\d+\s*-\s*(.+?)\s*-\s*(.+)$"
+        # Use \s+ (not \s*) to require spaces around separator dashes,
+        # so hyphens within names (e.g., "MX-5") are not treated as separators.
+        pattern = r"^IR\s+-\s+V\d+\s+-\s+(.+?)\s+-\s+(.+)$"
         match = re.match(pattern, self.download_name.strip())
         if match:
             return match.group(1).strip()
 
-        # Fallback: try simpler parsing if format is different
+        # Fallback: try splitting on " - " first, then bare "-"
+        parts = [p.strip() for p in self.download_name.split(" - ")]
+        if len(parts) >= 4:
+            return parts[2]
         parts = [p.strip() for p in self.download_name.split("-")]
         if len(parts) >= 4:
-            # Remove "IR" and "V1" (or similar version), get the car name
             return parts[2]
 
         # If all parsing fails, return empty string
@@ -113,15 +117,19 @@ class SetupRecord(BaseModel):
         """
         # Pattern: "IR - V1 - <Car Name> - <Track Name>"
         # We want to extract <Track Name>
-        pattern = r"^IR\s*-\s*V\d+\s*-\s*(.+?)\s*-\s*(.+)$"
+        # Use \s+ (not \s*) to require spaces around separator dashes,
+        # so hyphens within names (e.g., "Spa-Francorchamps") are not treated as separators.
+        pattern = r"^IR\s+-\s+V\d+\s+-\s+(.+?)\s+-\s+(.+)$"
         match = re.match(pattern, self.download_name.strip())
         if match:
             return match.group(2).strip()
 
-        # Fallback: try simpler parsing if format is different
+        # Fallback: try splitting on " - " first, then bare "-"
+        parts = [p.strip() for p in self.download_name.split(" - ")]
+        if len(parts) >= 4:
+            return " - ".join(parts[3:])
         parts = [p.strip() for p in self.download_name.split("-")]
         if len(parts) >= 4:
-            # Get everything after the car name
             return "-".join(parts[3:])
 
         # If all parsing fails, return empty string
@@ -174,3 +182,49 @@ class CDASetupInfo(BaseModel):
             Compound key in format {series_id}_{bundle_id}_{week_number}
         """
         return f"{self.series_id}_{self.bundle_id}_{self.week_number}"
+
+
+class TracKTitanSetupInfo(BaseModel):
+    """Track Titan-specific setup metadata.
+
+    This model holds the structured data from Track Titan's API that is
+    needed to identify and download setups.
+
+    Attributes:
+        setup_uuid: The Track Titan UUID for this setup
+        car_id: Track Titan car identifier (e.g., "mx-5_cup")
+        track_id: Track Titan track identifier (e.g., "bathurst")
+        car_name: Human-readable car name
+        track_name: Human-readable track name
+        car_shorthand: iRacing car folder names (e.g., "mx5 mx52016")
+        series_name: Series name (e.g., "Production Car Challenge")
+        driver_name: Setup creator driver name
+        season: Season number string (e.g., "1")
+        week: Week number string (e.g., "8")
+        year: Year number (e.g., 2026)
+        has_wet_setup: Whether the setup includes wet variants
+        is_bundle: Whether this is a bundle of multiple setups
+    """
+
+    setup_uuid: str = Field(..., description="Track Titan UUID for this setup")
+    car_id: str = Field(..., description="Track Titan car identifier")
+    track_id: str = Field(..., description="Track Titan track identifier")
+    car_name: str = Field(..., description="Human-readable car name")
+    track_name: str = Field(..., description="Human-readable track name")
+    car_shorthand: str = Field(default="", description="iRacing car folder names")
+    series_name: str = Field(default="", description="Series name")
+    driver_name: str = Field(default="", description="Setup creator driver name")
+    season: str = Field(default="", description="Season number")
+    week: str = Field(default="", description="Week number")
+    year: int | str = Field(default="", description="Year")
+    has_wet_setup: bool = Field(default=False, description="Has wet setup variants")
+    is_bundle: bool = Field(default=False, description="Is a bundle")
+
+    @property
+    def unique_id(self) -> str:
+        """Generate a unique identifier for state tracking.
+
+        Returns:
+            Compound key based on setup UUID
+        """
+        return self.setup_uuid

@@ -1,7 +1,7 @@
 """Pytest configuration and fixtures."""
 
 import tempfile
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -131,4 +131,173 @@ def cda_setup_record_data():
         "changelog": "",
         "cat": "IMSA",
         "series": "IMSA",
+    }
+
+
+# Track Titan-specific fixtures
+
+
+@pytest.fixture
+def tt_credentials():
+    """Track Titan authentication credentials for testing."""
+    return {
+        "access_token": "test-cognito-jwt-token-12345",
+        "user_id": "896a9f9d-ee3e-40eb-b9b6-2279c8db7302",
+    }
+
+
+@pytest.fixture
+def tt_setups_response():
+    """Sample Track Titan setups API response for testing."""
+    return {
+        "success": True,
+        "status": 200,
+        "data": {
+            "setups": [
+                {
+                    "id": "f28c1355-b9a6-4a6b-8fc7-02afed6fd47d",
+                    "title": "Global Mazda MX-5 Cup (PCC) Mount Panorama Circuit",
+                    "cardImage": {
+                        "_type": "image",
+                        "asset": {"_ref": "image-abc-png", "_type": "reference"},
+                    },
+                    "price": {
+                        "currency": "USD",
+                        "displayPrice": "4.99",
+                        "price_in_minor_units": 499,
+                    },
+                    "setupCombos": [
+                        {
+                            "game": {"gameId": "iRacing", "name": "iRacing"},
+                            "track": {
+                                "name": "Mount Panorama Circuit",
+                                "trackId": "bathurst",
+                            },
+                            "_updatedAt": "2026-02-02T02:43:09Z",
+                            "car": {
+                                "name": "Global Mazda MX-5 Cup",
+                                "carId": "mx-5_cup",
+                                "carShorthand": "mx5 mx52016",
+                            },
+                        }
+                    ],
+                    "description": [],
+                    "telemetry": {"userId": "abc", "sessionId": "xyz"},
+                    "lastUpdatedAt": 1770000194000,
+                    "period": {
+                        "week": "8",
+                        "endDate": "2026-02-10T01:00:00.000Z",
+                        "year": 2026,
+                        "name": "iRacing Season 1 Week 8 2026",
+                        "season": "1",
+                        "_id": "period-1",
+                        "startDate": "2026-02-01T00:45:53.130Z",
+                    },
+                    "config": [
+                        {
+                            "gameId": "iRacing",
+                            "trackId": "bathurst",
+                            "carId": "mx-5_cup",
+                            "carShorthand": "mx5 mx52016",
+                        }
+                    ],
+                    "hotlapLink": None,
+                    "trackGuideLink": None,
+                    "hasWetSetup": True,
+                    "hymoDriver": {"driverName": "William Chadwick"},
+                    "hymoSeries": {"seriesName": "Production Car Challenge"},
+                    "isBundle": False,
+                    "isActive": True,
+                },
+                {
+                    "id": "c38dff77-6b78-415a-bfa1-65894d0d1ffd",
+                    "title": "Indycar Dallara IR18 Mid-Ohio",
+                    "cardImage": None,
+                    "price": {
+                        "currency": "USD",
+                        "displayPrice": "4.99",
+                        "price_in_minor_units": 499,
+                    },
+                    "setupCombos": [
+                        {
+                            "game": {"gameId": "iRacing", "name": "iRacing"},
+                            "track": {
+                                "name": "Mid-Ohio Sports Car Course - Full Course",
+                                "trackId": "mid-ohio",
+                            },
+                            "_updatedAt": "2026-02-02T02:43:09Z",
+                            "car": {
+                                "name": "Indycar Dallara IR18",
+                                "carId": "dallara-ir18",
+                                "carShorthand": "dallarair18",
+                            },
+                        }
+                    ],
+                    "description": [],
+                    "telemetry": None,
+                    "lastUpdatedAt": 1770000194000,
+                    "period": {
+                        "week": "8",
+                        "endDate": "2026-02-10T01:00:00.000Z",
+                        "year": 2026,
+                        "name": "iRacing Season 1 Week 8 2026",
+                        "season": "1",
+                        "_id": "period-1",
+                        "startDate": "2026-02-01T00:45:53.130Z",
+                    },
+                    "config": [
+                        {
+                            "gameId": "iRacing",
+                            "trackId": "mid-ohio",
+                            "carId": "dallara-ir18",
+                            "carShorthand": "dallarair18",
+                        }
+                    ],
+                    "hotlapLink": None,
+                    "trackGuideLink": None,
+                    "hasWetSetup": False,
+                    "hymoDriver": {"driverName": "Test Driver"},
+                    "hymoSeries": {"seriesName": "INDYCAR Series"},
+                    "isBundle": False,
+                    "isActive": True,
+                },
+            ]
+        },
+    }
+
+
+@pytest.fixture
+def tt_setup_info_data():
+    """Sample TracKTitanSetupInfo data for testing."""
+    return {
+        "setup_uuid": "f28c1355-b9a6-4a6b-8fc7-02afed6fd47d",
+        "car_id": "mx-5_cup",
+        "track_id": "bathurst",
+        "car_name": "Global Mazda MX-5 Cup",
+        "track_name": "Mount Panorama Circuit",
+        "car_shorthand": "mx5 mx52016",
+        "series_name": "Production Car Challenge",
+        "driver_name": "William Chadwick",
+        "season": "1",
+        "week": "8",
+        "year": 2026,
+        "has_wet_setup": True,
+        "is_bundle": False,
+    }
+
+
+@pytest.fixture
+def tt_setup_record_data():
+    """Sample Track Titan SetupRecord data for testing."""
+    return {
+        "id": 123456789,
+        "download_name": "IR - V1 - Global Mazda MX-5 Cup - Mount Panorama Circuit",
+        "download_url": "https://services.tracktitan.io/api/v2/games/iRacing/setups/f28c1355-b9a6-4a6b-8fc7-02afed6fd47d/download",
+        "creation_date": datetime(2026, 2, 2, 2, 43, 9, tzinfo=UTC),
+        "updated_date": datetime(2026, 2, 2, 2, 43, 9, tzinfo=UTC),
+        "ver": "2026S1 W8",
+        "setup_ver": "1.0",
+        "changelog": "",
+        "cat": "PCC",
+        "series": "PCC",
     }
