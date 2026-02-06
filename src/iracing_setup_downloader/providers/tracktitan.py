@@ -318,15 +318,15 @@ class TracKTitanProvider(SetupProvider):
         if not track_name:
             track_name = self._slug_to_name(track_id)
 
-        # Extract period info
-        period = item.get("period", {})
+        # Extract period info (period or its fields can be None)
+        period = item.get("period") or {}
         season = period.get("season", "")
         week = period.get("week", "")
         year = period.get("year", "")
 
-        # Extract series and driver
-        series_name = item.get("hymoSeries", {}).get("seriesName", "")
-        driver_name = item.get("hymoDriver", {}).get("driverName", "")
+        # Extract series and driver (can be None)
+        series_name = (item.get("hymoSeries") or {}).get("seriesName", "")
+        driver_name = (item.get("hymoDriver") or {}).get("driverName", "")
 
         # Create TracKTitan-specific info
         tt_info = TracKTitanSetupInfo(

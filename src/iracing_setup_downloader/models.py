@@ -214,9 +214,9 @@ class TracKTitanSetupInfo(BaseModel):
     car_shorthand: str = Field(default="", description="iRacing car folder names")
     series_name: str = Field(default="", description="Series name")
     driver_name: str = Field(default="", description="Setup creator driver name")
-    season: str = Field(default="", description="Season number")
-    week: str = Field(default="", description="Week number")
-    year: int | str = Field(default="", description="Year")
+    season: int | str | None = Field(default="", description="Season number")
+    week: int | str | None = Field(default="", description="Week number")
+    year: int | str | None = Field(default="", description="Year")
     has_wet_setup: bool = Field(default=False, description="Has wet setup variants")
     is_bundle: bool = Field(default=False, description="Is a bundle")
 
