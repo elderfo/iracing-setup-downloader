@@ -43,7 +43,12 @@ class Settings(BaseSettings):
     tt_access_token: str | None = Field(
         default=None,
         validation_alias=AliasChoices("tt_access_token"),
-        description="Track Titan AWS Cognito access token for API authentication",
+        description="Track Titan AWS Cognito access token for v2 API calls",
+    )
+    tt_id_token: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("tt_id_token"),
+        description="Track Titan AWS Cognito ID token for v1 download calls",
     )
     tt_user_id: str | None = Field(
         default=None,

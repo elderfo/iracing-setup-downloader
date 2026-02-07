@@ -45,8 +45,17 @@ class TracKTitanProvider(SetupProvider):
     """Provider for Track Titan setups.
 
     This provider interfaces with the Track Titan API to fetch and download
-    iRacing setups. It requires an AWS Cognito JWT access token and user ID
-    for authentication.
+    iRacing setups. It requires AWS Cognito JWT tokens and a user ID for
+    authentication.
+
+    Track Titan uses two separate Cognito tokens:
+    - **Access token** (``token_use: "access"``): Used for v2 API calls
+      (listing setups, user info, etc.)
+    - **ID token** (``token_use: "id"``): Used for v1 API calls
+      (downloading setups, user data)
+
+    If only one token is provided it is used for all requests (backward
+    compatible).
 
     Track Titan organizes setups by season/week, with each setup representing
     a car/track combination for a specific racing week. Downloads are provided
@@ -72,18 +81,22 @@ class TracKTitanProvider(SetupProvider):
         self,
         access_token: str,
         user_id: str,
+        id_token: str | None = None,
         track_matcher: TrackMatcher | None = None,
         duplicate_detector: DuplicateDetector | None = None,
     ) -> None:
         """Initialize the Track Titan provider.
 
         Args:
-            access_token: AWS Cognito JWT access token for authentication
+            access_token: AWS Cognito JWT access token for v2 API calls
             user_id: Track Titan user UUID for API requests
+            id_token: AWS Cognito JWT ID token for v1 download calls.
+                Falls back to access_token when not provided.
             track_matcher: Optional TrackMatcher for track-based folder organization
             duplicate_detector: Optional DuplicateDetector for skipping binary duplicates
         """
         self._access_token = access_token
+        self._id_token = id_token
         self._user_id = user_id
         self._track_matcher = track_matcher
         self._duplicate_detector = duplicate_detector
@@ -100,13 +113,28 @@ class TracKTitanProvider(SetupProvider):
         return "tracktitan"
 
     def get_auth_headers(self) -> dict[str, str]:
-        """Get authentication headers for API requests.
+        """Get authentication headers for v2 API requests (listing setups, etc.).
 
         Returns:
             Dictionary containing authorization and custom Track Titan headers.
         """
         return {
             "authorization": self._access_token,
+            "x-consumer-id": self.CONSUMER_ID,
+            "x-user-device": "desktop",
+            "x-user-id": self._user_id,
+        }
+
+    def get_download_headers(self) -> dict[str, str]:
+        """Get authentication headers for v1 download requests.
+
+        Uses the ID token when available, falling back to the access token.
+
+        Returns:
+            Dictionary containing authorization and custom Track Titan headers.
+        """
+        return {
+            "authorization": self._id_token or self._access_token,
             "x-consumer-id": self.CONSUMER_ID,
             "x-user-device": "desktop",
             "x-user-id": self._user_id,
@@ -455,7 +483,7 @@ class TracKTitanProvider(SetupProvider):
             # Step 1: POST to get pre-signed CloudFront download URL
             async with session.post(
                 setup.download_url,
-                headers=self.get_auth_headers(),
+                headers=self.get_download_headers(),
             ) as response:
                 if response.status == 401:
                     msg = "Download failed: Authentication required"

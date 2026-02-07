@@ -835,6 +835,12 @@ def download_tracktitan(
         help="Track Titan access token (overrides env var)",
         envvar="TT_ACCESS_TOKEN",
     ),
+    id_token: str | None = typer.Option(
+        None,
+        "--id-token",
+        help="Track Titan ID token for downloads (overrides env var)",
+        envvar="TT_ID_TOKEN",
+    ),
     user_id: str | None = typer.Option(
         None,
         "--user-id",
@@ -877,13 +883,14 @@ def download_tracktitan(
     """Download setups from Track Titan provider.
 
     Requires Track Titan authentication credentials:
-    - Access token (AWS Cognito JWT)
+    - Access token (AWS Cognito JWT access token for API calls)
+    - ID token (AWS Cognito JWT ID token for downloads, optional)
     - User ID (UUID)
 
-    Both can be obtained from browser developer tools while logged into Track Titan.
+    All can be obtained from browser developer tools while logged into Track Titan.
 
     Example:
-        iracing-setup-downloader download tracktitan --access-token eyJ... --user-id abc-123
+        iracing-setup-downloader download tracktitan --access-token eyJ... --id-token eyJ... --user-id abc-123
     """
     setup_logging(verbose)
 
@@ -894,6 +901,8 @@ def download_tracktitan(
         # Override settings with CLI arguments
         if access_token:
             settings.tt_access_token = access_token
+        if id_token:
+            settings.tt_id_token = id_token
         if user_id:
             settings.tt_user_id = user_id
         if output:
@@ -951,6 +960,7 @@ def download_tracktitan(
                 dry_run,
                 track_matcher,
                 limit,
+                id_token=settings.tt_id_token,
             )
         )
 
@@ -977,11 +987,12 @@ async def _download_tracktitan_async(
     dry_run: bool,
     track_matcher: TrackMatcher | None = None,
     limit: int | None = None,
+    id_token: str | None = None,
 ) -> None:
     """Async implementation of Track Titan download.
 
     Args:
-        access_token: Track Titan AWS Cognito access token
+        access_token: Track Titan AWS Cognito access token for v2 API calls
         user_id: Track Titan user UUID
         output_path: Directory to save setups
         max_concurrent: Maximum parallel downloads
@@ -991,6 +1002,7 @@ async def _download_tracktitan_async(
         dry_run: If True, don't actually download
         track_matcher: Optional TrackMatcher for track-based folder organization
         limit: Maximum number of new setups to download
+        id_token: Track Titan AWS Cognito ID token for v1 download calls
     """
     # Initialize persistent hash cache
     hash_cache = FileHashCache()
@@ -1005,6 +1017,7 @@ async def _download_tracktitan_async(
     provider = TracKTitanProvider(
         access_token=access_token,
         user_id=user_id,
+        id_token=id_token,
         track_matcher=track_matcher,
         duplicate_detector=duplicate_detector if not dry_run else None,
     )
@@ -1089,6 +1102,8 @@ def list_tracktitan(
     Requires Track Titan authentication credentials:
     - Access token (AWS Cognito JWT)
     - User ID (UUID)
+
+    The list command only uses the access token (v2 API); an ID token is not needed.
 
     Example:
         iracing-setup-downloader list tracktitan --access-token eyJ... --user-id abc-123

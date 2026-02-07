@@ -89,7 +89,7 @@ class TestTracKTitanProvider:
         assert provider.name == "tracktitan"
 
     def test_get_auth_headers(self, tt_credentials):
-        """Test auth headers include all required Track Titan headers."""
+        """Test auth headers use access token for v2 API requests."""
         provider = TracKTitanProvider(**tt_credentials)
         headers = provider.get_auth_headers()
 
@@ -97,6 +97,26 @@ class TestTracKTitanProvider:
         assert headers["x-consumer-id"] == "trackTitan"
         assert headers["x-user-device"] == "desktop"
         assert headers["x-user-id"] == tt_credentials["user_id"]
+
+    def test_get_download_headers_uses_id_token(self, tt_credentials):
+        """Test download headers use ID token for v1 download requests."""
+        provider = TracKTitanProvider(**tt_credentials)
+        headers = provider.get_download_headers()
+
+        assert headers["authorization"] == tt_credentials["id_token"]
+        assert headers["x-consumer-id"] == "trackTitan"
+        assert headers["x-user-device"] == "desktop"
+        assert headers["x-user-id"] == tt_credentials["user_id"]
+
+    def test_get_download_headers_falls_back_to_access_token(self):
+        """Test download headers fall back to access token when no ID token."""
+        provider = TracKTitanProvider(
+            access_token="my-access-token",
+            user_id="test-user-id",
+        )
+        headers = provider.get_download_headers()
+
+        assert headers["authorization"] == "my-access-token"
 
     def test_slug_to_name(self, tt_credentials):
         """Test slug to name conversion."""

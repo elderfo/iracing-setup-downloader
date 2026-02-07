@@ -141,7 +141,8 @@ def cda_setup_record_data():
 def tt_credentials():
     """Track Titan authentication credentials for testing."""
     return {
-        "access_token": "test-cognito-jwt-token-12345",
+        "access_token": "test-cognito-access-token-12345",
+        "id_token": "test-cognito-id-token-67890",
         "user_id": "896a9f9d-ee3e-40eb-b9b6-2279c8db7302",
     }
 
