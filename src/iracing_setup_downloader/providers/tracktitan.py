@@ -617,8 +617,8 @@ class TracKTitanProvider(SetupProvider):
         # Track if any spaces exist before sanitizing
         had_spaces = " " in filename
 
-        # Sanitize: replace spaces with underscores
-        filename = filename.replace(" ", "_")
+        # Sanitize: replace path separators and spaces with underscores
+        filename = filename.replace("/", "_").replace("\\", "_").replace(" ", "_")
 
         # Safety: ensure no double underscores
         while "__" in filename:
