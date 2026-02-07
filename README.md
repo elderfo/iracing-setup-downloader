@@ -69,7 +69,8 @@ CDA_SESSION_ID=your_phpsessid_cookie
 CDA_CSRF_TOKEN=your_csrf_token
 
 # Track Titan Authentication (required for Track Titan)
-TT_ACCESS_TOKEN=your_cognito_jwt_token
+TT_ACCESS_TOKEN=your_cognito_access_token
+TT_ID_TOKEN=your_cognito_id_token
 TT_USER_ID=your_user_uuid
 
 # Directory for downloaded setups (optional, defaults to ~/Documents/iRacing/setups)
@@ -92,7 +93,8 @@ MAX_RETRIES=3          # Retry attempts for failed downloads
 | `GOFAST_TOKEN` | Required for GoFast | - | GoFast API bearer token |
 | `CDA_SESSION_ID` | Required for CDA | - | CDA PHPSESSID cookie |
 | `CDA_CSRF_TOKEN` | Required for CDA | - | CDA x-elle-csrf-token header |
-| `TT_ACCESS_TOKEN` | Required for Track Titan | - | Track Titan AWS Cognito JWT token |
+| `TT_ACCESS_TOKEN` | Required for Track Titan | - | Track Titan AWS Cognito access token (for API calls) |
+| `TT_ID_TOKEN` | Optional for Track Titan | - | Track Titan AWS Cognito ID token (for downloads) |
 | `TT_USER_ID` | Required for Track Titan | - | Track Titan user UUID |
 | `IRACING_SETUPS_PATH` | `~/Documents/iRacing/setups` | - | Directory to save setups |
 | `MAX_CONCURRENT` | 5 | 1-20 | Parallel download limit |
@@ -127,16 +129,25 @@ MAX_RETRIES=3          # Retry attempts for failed downloads
 
 ### Getting Your Track Titan Credentials
 
-1. Visit Track Titan (https://tracktitan.io) in your browser
+Track Titan uses two separate AWS Cognito JWT tokens:
+- **Access token** (`token_use: "access"`): Used for API calls (listing setups)
+- **ID token** (`token_use: "id"`): Used for downloads
+
+To obtain them:
+
+1. Visit Track Titan (https://tracktitan.io) in your browser or open the Track Titan Ghost app
 2. Log in to your Track Titan account
 3. Open Developer Tools (F12 or Ctrl+Shift+I)
 4. Navigate to the Network tab and reload the page
 5. Look for requests to `services.tracktitan.io`
 6. From the request headers, copy:
-   - The `authorization` header value (AWS Cognito JWT token) to `TT_ACCESS_TOKEN`
+   - The `authorization` header from a **v2 API call** (e.g., `/api/v2/games/iRacing/setups`) to `TT_ACCESS_TOKEN`
+   - The `authorization` header from a **v1 download call** (e.g., `/api/v1/user/.../setup/.../download`) to `TT_ID_TOKEN`
    - The `x-user-id` header value (UUID) to `TT_USER_ID`
 
-**Note:** Track Titan uses AWS Cognito tokens which expire periodically. You will need to refresh credentials by logging in again when they expire.
+**Tip:** You can distinguish the tokens by decoding the JWT payload - the access token has `"token_use": "access"` and the ID token has `"token_use": "id"`.
+
+**Note:** If you only provide `TT_ACCESS_TOKEN`, it will be used for both API calls and downloads. Providing both tokens is recommended for reliability. Cognito tokens expire periodically and will need to be refreshed by logging in again.
 
 ## Usage
 
@@ -183,6 +194,19 @@ The tool will:
 2. Check local state to identify new setups
 3. Skip setups already downloaded (unless updated)
 4. Download new setups with progress visualization
+
+### Limit Number of Downloads
+
+Cap the number of new setups to download per run:
+
+```bash
+# Download at most 5 new setups from Track Titan
+poetry run iracing-setup-downloader download tracktitan --limit 5
+
+# Works with all providers
+poetry run iracing-setup-downloader download gofast --limit 10
+poetry run iracing-setup-downloader download cda --limit 10
+```
 
 ### Dry Run (Preview Downloads)
 
@@ -512,10 +536,11 @@ See `providers/gofast.py` for an example implementation.
 **Error:** "Authentication failed: Invalid or expired access token"
 
 **Solution:**
-- Verify both `TT_ACCESS_TOKEN` and `TT_USER_ID` are set in `.env`
+- Verify `TT_ACCESS_TOKEN`, `TT_USER_ID`, and optionally `TT_ID_TOKEN` are set in `.env`
 - Log in to Track Titan again to refresh your AWS Cognito session
 - Re-extract the `authorization` and `x-user-id` headers from browser DevTools
 - Cognito tokens have a limited lifespan and will need periodic refresh
+- If listing works but downloads fail, you likely need to set `TT_ID_TOKEN` separately
 
 ### Connection Timeout
 
