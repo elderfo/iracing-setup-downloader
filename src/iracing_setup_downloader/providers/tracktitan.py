@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import io
 import logging
 import os
-import random
 import re
 import zipfile
 from datetime import UTC, datetime
@@ -69,8 +67,6 @@ class TracKTitanProvider(SetupProvider):
     REQUEST_TIMEOUT = 30.0
     DEFAULT_PAGE_LIMIT = 12
     CONSUMER_ID = "trackTitan"
-    PAGE_DELAY_MIN = 1.0
-    PAGE_DELAY_MAX = 3.0
 
     def __init__(
         self,
@@ -156,11 +152,6 @@ class TracKTitanProvider(SetupProvider):
 
                 if not has_more:
                     break
-
-                # Human-like delay between page fetches
-                delay = random.uniform(self.PAGE_DELAY_MIN, self.PAGE_DELAY_MAX)
-                logger.debug("Waiting %.1fs before fetching next page", delay)
-                await asyncio.sleep(delay)
 
                 page += 1
 
