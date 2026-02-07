@@ -425,6 +425,11 @@ class TestTracKTitanProviderDownloadSetup:
                 zf.writestr(filename, b"test setup content")
         return buffer.getvalue()
 
+    def _mock_two_step_download(self, mock_session, post_response, get_response):
+        """Configure mock session for two-step download (POST then GET)."""
+        mock_session.post.return_value.__aenter__.return_value = post_response
+        mock_session.get.return_value.__aenter__.return_value = get_response
+
     @pytest.mark.asyncio
     async def test_download_setup_success(
         self, tt_credentials, tt_setup_record_data, temp_dir
@@ -435,21 +440,33 @@ class TestTracKTitanProviderDownloadSetup:
 
         zip_content = self._create_test_zip(["mx5/mx5 @ bathurst CR.sto"])
 
-        mock_response = MagicMock()
-        mock_response.status = 200
-        mock_response.read = AsyncMock(return_value=zip_content)
+        # Step 1: POST returns signed URL
+        mock_post_response = MagicMock()
+        mock_post_response.status = 200
+        mock_post_response.json = AsyncMock(
+            return_value={"url": "https://cloudfront.example.com/setup.zip"}
+        )
+
+        # Step 2: GET downloads the ZIP
+        mock_get_response = MagicMock()
+        mock_get_response.status = 200
+        mock_get_response.read = AsyncMock(return_value=zip_content)
 
         with patch.object(
             provider, "_get_session", new_callable=AsyncMock
         ) as mock_get_session:
             mock_session = MagicMock()
-            mock_session.get.return_value.__aenter__.return_value = mock_response
+            self._mock_two_step_download(
+                mock_session, mock_post_response, mock_get_response
+            )
             mock_get_session.return_value = mock_session
 
             result = await provider.download_setup(setup, temp_dir)
 
             assert len(result.extracted_files) == 1
             assert result.extracted_files[0].suffix == ".sto"
+            mock_session.post.assert_called_once()
+            mock_session.get.assert_called_once()
 
         await provider.close()
 
@@ -457,18 +474,18 @@ class TestTracKTitanProviderDownloadSetup:
     async def test_download_setup_auth_error(
         self, tt_credentials, tt_setup_record_data, temp_dir
     ):
-        """Test authentication error during download."""
+        """Test authentication error during download POST."""
         provider = TracKTitanProvider(**tt_credentials)
         setup = SetupRecord(**tt_setup_record_data)
 
-        mock_response = MagicMock()
-        mock_response.status = 401
+        mock_post_response = MagicMock()
+        mock_post_response.status = 401
 
         with patch.object(
             provider, "_get_session", new_callable=AsyncMock
         ) as mock_get_session:
             mock_session = MagicMock()
-            mock_session.get.return_value.__aenter__.return_value = mock_response
+            mock_session.post.return_value.__aenter__.return_value = mock_post_response
             mock_get_session.return_value = mock_session
 
             with pytest.raises(TracKTitanAuthenticationError):
@@ -480,18 +497,18 @@ class TestTracKTitanProviderDownloadSetup:
     async def test_download_setup_not_found(
         self, tt_credentials, tt_setup_record_data, temp_dir
     ):
-        """Test 404 error during download."""
+        """Test 404 error during download POST."""
         provider = TracKTitanProvider(**tt_credentials)
         setup = SetupRecord(**tt_setup_record_data)
 
-        mock_response = MagicMock()
-        mock_response.status = 404
+        mock_post_response = MagicMock()
+        mock_post_response.status = 404
 
         with patch.object(
             provider, "_get_session", new_callable=AsyncMock
         ) as mock_get_session:
             mock_session = MagicMock()
-            mock_session.get.return_value.__aenter__.return_value = mock_response
+            mock_session.post.return_value.__aenter__.return_value = mock_post_response
             mock_get_session.return_value = mock_session
 
             with pytest.raises(TracKTitanDownloadError, match="not found"):
@@ -509,15 +526,23 @@ class TestTracKTitanProviderDownloadSetup:
 
         zip_content = self._create_test_zip(["readme.txt", "info.json"])
 
-        mock_response = MagicMock()
-        mock_response.status = 200
-        mock_response.read = AsyncMock(return_value=zip_content)
+        mock_post_response = MagicMock()
+        mock_post_response.status = 200
+        mock_post_response.json = AsyncMock(
+            return_value={"url": "https://cloudfront.example.com/setup.zip"}
+        )
+
+        mock_get_response = MagicMock()
+        mock_get_response.status = 200
+        mock_get_response.read = AsyncMock(return_value=zip_content)
 
         with patch.object(
             provider, "_get_session", new_callable=AsyncMock
         ) as mock_get_session:
             mock_session = MagicMock()
-            mock_session.get.return_value.__aenter__.return_value = mock_response
+            self._mock_two_step_download(
+                mock_session, mock_post_response, mock_get_response
+            )
             mock_get_session.return_value = mock_session
 
             with pytest.raises(TracKTitanDownloadError, match="No .sto files"):
@@ -533,18 +558,50 @@ class TestTracKTitanProviderDownloadSetup:
         provider = TracKTitanProvider(**tt_credentials)
         setup = SetupRecord(**tt_setup_record_data)
 
-        mock_response = MagicMock()
-        mock_response.status = 200
-        mock_response.read = AsyncMock(return_value=b"not a valid zip file")
+        mock_post_response = MagicMock()
+        mock_post_response.status = 200
+        mock_post_response.json = AsyncMock(
+            return_value={"url": "https://cloudfront.example.com/setup.zip"}
+        )
+
+        mock_get_response = MagicMock()
+        mock_get_response.status = 200
+        mock_get_response.read = AsyncMock(return_value=b"not a valid zip file")
 
         with patch.object(
             provider, "_get_session", new_callable=AsyncMock
         ) as mock_get_session:
             mock_session = MagicMock()
-            mock_session.get.return_value.__aenter__.return_value = mock_response
+            self._mock_two_step_download(
+                mock_session, mock_post_response, mock_get_response
+            )
             mock_get_session.return_value = mock_session
 
             with pytest.raises(TracKTitanDownloadError, match="Invalid ZIP"):
+                await provider.download_setup(setup, temp_dir)
+
+        await provider.close()
+
+    @pytest.mark.asyncio
+    async def test_download_setup_missing_signed_url(
+        self, tt_credentials, tt_setup_record_data, temp_dir
+    ):
+        """Test error when POST response has no download URL."""
+        provider = TracKTitanProvider(**tt_credentials)
+        setup = SetupRecord(**tt_setup_record_data)
+
+        mock_post_response = MagicMock()
+        mock_post_response.status = 200
+        mock_post_response.json = AsyncMock(return_value={})
+
+        with patch.object(
+            provider, "_get_session", new_callable=AsyncMock
+        ) as mock_get_session:
+            mock_session = MagicMock()
+            mock_session.post.return_value.__aenter__.return_value = mock_post_response
+            mock_get_session.return_value = mock_session
+
+            with pytest.raises(TracKTitanDownloadError, match="No download URL"):
                 await provider.download_setup(setup, temp_dir)
 
         await provider.close()

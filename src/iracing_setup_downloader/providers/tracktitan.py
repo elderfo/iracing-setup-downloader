@@ -63,7 +63,7 @@ class TracKTitanProvider(SetupProvider):
 
     API_BASE = "https://services.tracktitan.io"
     SETUPS_ENDPOINT = "/api/v2/games/iRacing/setups"
-    DOWNLOAD_URL_TEMPLATE = "/api/v2/games/iRacing/setups/{setup_id}/download"
+    DOWNLOAD_URL_TEMPLATE = "/api/v1/user/{user_id}/setup/{setup_id}/download"
     REQUEST_TIMEOUT = 30.0
     DEFAULT_PAGE_LIMIT = 100
     CONSUMER_ID = "trackTitan"
@@ -346,9 +346,10 @@ class TracKTitanProvider(SetupProvider):
             is_bundle=item.get("isBundle", False),
         )
 
-        # Construct download URL
+        # Construct download URL (v1 endpoint requires user_id)
         download_url = (
-            f"{self.API_BASE}{self.DOWNLOAD_URL_TEMPLATE.format(setup_id=setup_id)}"
+            f"{self.API_BASE}"
+            f"{self.DOWNLOAD_URL_TEMPLATE.format(user_id=self._user_id, setup_id=setup_id)}"
         )
 
         # Build download name in the standard format for SetupRecord parsing
@@ -450,7 +451,9 @@ class TracKTitanProvider(SetupProvider):
 
         try:
             session = await self._get_session()
-            async with session.get(
+
+            # Step 1: POST to get pre-signed CloudFront download URL
+            async with session.post(
                 setup.download_url,
                 headers=self.get_auth_headers(),
             ) as response:
@@ -475,9 +478,33 @@ class TracKTitanProvider(SetupProvider):
                     logger.error(msg)
                     raise TracKTitanDownloadError(msg)
 
-                # Download ZIP content
                 try:
-                    content = await response.read()
+                    data = await response.json()
+                except aiohttp.ContentTypeError as e:
+                    msg = f"Invalid JSON response from download endpoint: {e}"
+                    logger.error(msg)
+                    raise TracKTitanDownloadError(msg) from e
+
+                signed_url = data.get("url")
+                if not signed_url:
+                    msg = f"No download URL in response for setup {setup.id}"
+                    logger.error(msg)
+                    raise TracKTitanDownloadError(msg)
+
+            logger.debug("Got signed download URL for setup %s", setup.id)
+
+            # Step 2: GET the actual ZIP from the signed CloudFront URL
+            async with session.get(signed_url) as zip_response:
+                if zip_response.status >= 400:
+                    msg = (
+                        f"Failed to download ZIP for setup {setup.id}: "
+                        f"status {zip_response.status}"
+                    )
+                    logger.error(msg)
+                    raise TracKTitanDownloadError(msg)
+
+                try:
+                    content = await zip_response.read()
                 except aiohttp.ClientError as e:
                     msg = f"Failed to read download content: {e}"
                     logger.error(msg)

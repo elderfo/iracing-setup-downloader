@@ -292,7 +292,7 @@ def tt_setup_record_data():
     return {
         "id": 123456789,
         "download_name": "IR - V1 - Global Mazda MX-5 Cup - Mount Panorama Circuit",
-        "download_url": "https://services.tracktitan.io/api/v2/games/iRacing/setups/f28c1355-b9a6-4a6b-8fc7-02afed6fd47d/download",
+        "download_url": "https://services.tracktitan.io/api/v1/user/896a9f9d-ee3e-40eb-b9b6-2279c8db7302/setup/f28c1355-b9a6-4a6b-8fc7-02afed6fd47d/download",
         "creation_date": datetime(2026, 2, 2, 2, 43, 9, tzinfo=UTC),
         "updated_date": datetime(2026, 2, 2, 2, 43, 9, tzinfo=UTC),
         "ver": "26S1 W8",
