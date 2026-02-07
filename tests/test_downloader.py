@@ -639,3 +639,65 @@ class TestSetupDownloader:
 
         assert result.downloaded == 0
         assert result.failed == 0
+
+    async def test_download_all_with_limit(
+        self,
+        tmp_path: Path,
+        mock_state: DownloadState,
+        sample_setups: list[SetupRecord],
+    ):
+        """Test that limit restricts number of downloads."""
+        provider = MockProvider(setups=sample_setups)
+        downloader = SetupDownloader(
+            provider=provider,
+            state=mock_state,
+            min_delay=0.01,
+            max_delay=0.02,
+        )
+
+        result = await downloader.download_all(tmp_path, limit=2)
+
+        assert result.total_available == 5
+        assert result.downloaded == 2
+        assert result.skipped == 0
+        assert result.failed == 0
+
+    async def test_download_all_limit_greater_than_available(
+        self,
+        tmp_path: Path,
+        mock_state: DownloadState,
+        sample_setups: list[SetupRecord],
+    ):
+        """Test that limit greater than available downloads all."""
+        provider = MockProvider(setups=sample_setups)
+        downloader = SetupDownloader(
+            provider=provider,
+            state=mock_state,
+            min_delay=0.01,
+            max_delay=0.02,
+        )
+
+        result = await downloader.download_all(tmp_path, limit=100)
+
+        assert result.total_available == 5
+        assert result.downloaded == 5
+
+    async def test_download_all_limit_none_downloads_all(
+        self,
+        tmp_path: Path,
+        mock_state: DownloadState,
+        sample_setups: list[SetupRecord],
+    ):
+        """Test that limit=None downloads everything."""
+        provider = MockProvider(setups=sample_setups)
+        downloader = SetupDownloader(
+            provider=provider,
+            state=mock_state,
+            min_delay=0.01,
+            max_delay=0.02,
+        )
+
+        result = await downloader.download_all(tmp_path, limit=None)
+
+        assert result.total_available == 5
+        assert result.downloaded == 5

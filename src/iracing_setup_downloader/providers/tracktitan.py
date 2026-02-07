@@ -45,8 +45,17 @@ class TracKTitanProvider(SetupProvider):
     """Provider for Track Titan setups.
 
     This provider interfaces with the Track Titan API to fetch and download
-    iRacing setups. It requires an AWS Cognito JWT access token and user ID
-    for authentication.
+    iRacing setups. It requires AWS Cognito JWT tokens and a user ID for
+    authentication.
+
+    Track Titan uses two separate Cognito tokens:
+    - **Access token** (``token_use: "access"``): Used for v2 API calls
+      (listing setups, user info, etc.)
+    - **ID token** (``token_use: "id"``): Used for v1 API calls
+      (downloading setups, user data)
+
+    If only one token is provided it is used for all requests (backward
+    compatible).
 
     Track Titan organizes setups by season/week, with each setup representing
     a car/track combination for a specific racing week. Downloads are provided
@@ -63,27 +72,31 @@ class TracKTitanProvider(SetupProvider):
 
     API_BASE = "https://services.tracktitan.io"
     SETUPS_ENDPOINT = "/api/v2/games/iRacing/setups"
-    DOWNLOAD_URL_TEMPLATE = "/api/v2/games/iRacing/setups/{setup_id}/download"
+    DOWNLOAD_URL_TEMPLATE = "/api/v1/user/{user_id}/setup/{setup_id}/download"
     REQUEST_TIMEOUT = 30.0
-    DEFAULT_PAGE_LIMIT = 50
+    DEFAULT_PAGE_LIMIT = 100
     CONSUMER_ID = "trackTitan"
 
     def __init__(
         self,
         access_token: str,
         user_id: str,
+        id_token: str | None = None,
         track_matcher: TrackMatcher | None = None,
         duplicate_detector: DuplicateDetector | None = None,
     ) -> None:
         """Initialize the Track Titan provider.
 
         Args:
-            access_token: AWS Cognito JWT access token for authentication
+            access_token: AWS Cognito JWT access token for v2 API calls
             user_id: Track Titan user UUID for API requests
+            id_token: AWS Cognito JWT ID token for v1 download calls.
+                Falls back to access_token when not provided.
             track_matcher: Optional TrackMatcher for track-based folder organization
             duplicate_detector: Optional DuplicateDetector for skipping binary duplicates
         """
         self._access_token = access_token
+        self._id_token = id_token
         self._user_id = user_id
         self._track_matcher = track_matcher
         self._duplicate_detector = duplicate_detector
@@ -100,13 +113,28 @@ class TracKTitanProvider(SetupProvider):
         return "tracktitan"
 
     def get_auth_headers(self) -> dict[str, str]:
-        """Get authentication headers for API requests.
+        """Get authentication headers for v2 API requests (listing setups, etc.).
 
         Returns:
             Dictionary containing authorization and custom Track Titan headers.
         """
         return {
             "authorization": self._access_token,
+            "x-consumer-id": self.CONSUMER_ID,
+            "x-user-device": "desktop",
+            "x-user-id": self._user_id,
+        }
+
+    def get_download_headers(self) -> dict[str, str]:
+        """Get authentication headers for v1 download requests.
+
+        Uses the ID token when available, falling back to the access token.
+
+        Returns:
+            Dictionary containing authorization and custom Track Titan headers.
+        """
+        return {
+            "authorization": self._id_token or self._access_token,
             "x-consumer-id": self.CONSUMER_ID,
             "x-user-device": "desktop",
             "x-user-id": self._user_id,
@@ -186,6 +214,7 @@ class TracKTitanProvider(SetupProvider):
         params = {"page": str(page), "limit": str(self.DEFAULT_PAGE_LIMIT)}
 
         session = await self._get_session()
+        logger.debug("Fetching page %d (limit=%s) from %s", page, params["limit"], url)
         async with session.get(
             url,
             headers=self.get_auth_headers(),
@@ -318,15 +347,15 @@ class TracKTitanProvider(SetupProvider):
         if not track_name:
             track_name = self._slug_to_name(track_id)
 
-        # Extract period info
-        period = item.get("period", {})
-        season = period.get("season", "")
-        week = period.get("week", "")
-        year = period.get("year", "")
+        # Extract period info (period or its fields can be None)
+        period = item.get("period") or {}
+        season = period.get("season")
+        week = period.get("week")
+        year = period.get("year")
 
-        # Extract series and driver
-        series_name = item.get("hymoSeries", {}).get("seriesName", "")
-        driver_name = item.get("hymoDriver", {}).get("driverName", "")
+        # Extract series and driver (can be None)
+        series_name = (item.get("hymoSeries") or {}).get("seriesName", "")
+        driver_name = (item.get("hymoDriver") or {}).get("driverName", "")
 
         # Create TracKTitan-specific info
         tt_info = TracKTitanSetupInfo(
@@ -345,9 +374,10 @@ class TracKTitanProvider(SetupProvider):
             is_bundle=item.get("isBundle", False),
         )
 
-        # Construct download URL
+        # Construct download URL (v1 endpoint requires user_id)
         download_url = (
-            f"{self.API_BASE}{self.DOWNLOAD_URL_TEMPLATE.format(setup_id=setup_id)}"
+            f"{self.API_BASE}"
+            f"{self.DOWNLOAD_URL_TEMPLATE.format(user_id=self._user_id, setup_id=setup_id)}"
         )
 
         # Build download name in the standard format for SetupRecord parsing
@@ -449,9 +479,11 @@ class TracKTitanProvider(SetupProvider):
 
         try:
             session = await self._get_session()
-            async with session.get(
+
+            # Step 1: POST to get pre-signed CloudFront download URL
+            async with session.post(
                 setup.download_url,
-                headers=self.get_auth_headers(),
+                headers=self.get_download_headers(),
             ) as response:
                 if response.status == 401:
                     msg = "Download failed: Authentication required"
@@ -474,9 +506,33 @@ class TracKTitanProvider(SetupProvider):
                     logger.error(msg)
                     raise TracKTitanDownloadError(msg)
 
-                # Download ZIP content
                 try:
-                    content = await response.read()
+                    data = await response.json()
+                except aiohttp.ContentTypeError as e:
+                    msg = f"Invalid JSON response from download endpoint: {e}"
+                    logger.error(msg)
+                    raise TracKTitanDownloadError(msg) from e
+
+                signed_url = data.get("url")
+                if not signed_url:
+                    msg = f"No download URL in response for setup {setup.id}"
+                    logger.error(msg)
+                    raise TracKTitanDownloadError(msg)
+
+            logger.debug("Got signed download URL for setup %s", setup.id)
+
+            # Step 2: GET the actual ZIP from the signed CloudFront URL
+            async with session.get(signed_url) as zip_response:
+                if zip_response.status >= 400:
+                    msg = (
+                        f"Failed to download ZIP for setup {setup.id}: "
+                        f"status {zip_response.status}"
+                    )
+                    logger.error(msg)
+                    raise TracKTitanDownloadError(msg)
+
+                try:
+                    content = await zip_response.read()
                 except aiohttp.ClientError as e:
                     msg = f"Failed to read download content: {e}"
                     logger.error(msg)
