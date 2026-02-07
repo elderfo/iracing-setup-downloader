@@ -856,6 +856,13 @@ def download_tracktitan(
         min=1,
         max=20,
     ),
+    limit: int | None = typer.Option(
+        None,
+        "--limit",
+        "-l",
+        help="Maximum number of new setups to download",
+        min=1,
+    ),
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
@@ -914,6 +921,8 @@ def download_tracktitan(
         config_table.add_row("Provider:", "[cyan]Track Titan[/cyan]")
         config_table.add_row("Output Path:", str(settings.output_path))
         config_table.add_row("Max Concurrent:", str(settings.max_concurrent))
+        if limit is not None:
+            config_table.add_row("Download Limit:", f"[magenta]{limit}[/magenta]")
         config_table.add_row("Dry Run:", "[yellow]Yes[/yellow]" if dry_run else "No")
         console.print(config_table)
         console.print()
@@ -941,6 +950,7 @@ def download_tracktitan(
                 settings.max_retries,
                 dry_run,
                 track_matcher,
+                limit,
             )
         )
 
@@ -966,6 +976,7 @@ async def _download_tracktitan_async(
     max_retries: int,
     dry_run: bool,
     track_matcher: TrackMatcher | None = None,
+    limit: int | None = None,
 ) -> None:
     """Async implementation of Track Titan download.
 
@@ -979,6 +990,7 @@ async def _download_tracktitan_async(
         max_retries: Maximum retry attempts
         dry_run: If True, don't actually download
         track_matcher: Optional TrackMatcher for track-based folder organization
+        limit: Maximum number of new setups to download
     """
     # Initialize persistent hash cache
     hash_cache = FileHashCache()
@@ -1014,7 +1026,9 @@ async def _download_tracktitan_async(
 
         # Download all setups
         console.print("[bold]Starting download...[/bold]\n")
-        result = await downloader.download_all(output_path, dry_run=dry_run)
+        result = await downloader.download_all(
+            output_path, dry_run=dry_run, limit=limit
+        )
 
         # Save state and hash cache
         if not dry_run:

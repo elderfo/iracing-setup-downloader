@@ -135,7 +135,7 @@ class SetupDownloader:
         self._cancelled = False
 
     async def download_all(
-        self, output_path: Path, dry_run: bool = False
+        self, output_path: Path, dry_run: bool = False, limit: int | None = None
     ) -> DownloadResult:
         """Download all available setups from the provider.
 
@@ -145,6 +145,7 @@ class SetupDownloader:
         Args:
             output_path: Base directory path for saving downloaded setups
             dry_run: If True, only simulate downloads without actually downloading
+            limit: Maximum number of new setups to download. If None, download all.
 
         Returns:
             DownloadResult containing download statistics and any errors
@@ -174,10 +175,18 @@ class SetupDownloader:
 
             # Filter out already-downloaded setups
             setups_to_download = self._filter_new_setups(all_setups, output_path)
+            already_downloaded = len(all_setups) - len(setups_to_download)
+
+            # Apply limit if specified
+            if limit is not None and len(setups_to_download) > limit:
+                logger.info(
+                    f"Limiting downloads to {limit} of {len(setups_to_download)} new setups"
+                )
+                setups_to_download = setups_to_download[:limit]
 
             result = DownloadResult(
                 total_available=len(all_setups),
-                skipped=len(all_setups) - len(setups_to_download),
+                skipped=already_downloaded,
                 downloaded=0,
                 failed=0,
             )
