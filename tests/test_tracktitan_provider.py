@@ -74,8 +74,8 @@ class TestTracKTitanSetupInfo:
         assert info.car_shorthand == ""
         assert info.series_name == ""
         assert info.driver_name == ""
-        assert info.season == ""
-        assert info.week == ""
+        assert info.season is None
+        assert info.week is None
         assert info.has_wet_setup is False
         assert info.is_bundle is False
 

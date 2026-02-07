@@ -349,9 +349,9 @@ class TracKTitanProvider(SetupProvider):
 
         # Extract period info (period or its fields can be None)
         period = item.get("period") or {}
-        season = period.get("season", "")
-        week = period.get("week", "")
-        year = period.get("year", "")
+        season = period.get("season")
+        week = period.get("week")
+        year = period.get("year")
 
         # Extract series and driver (can be None)
         series_name = (item.get("hymoSeries") or {}).get("seriesName", "")
