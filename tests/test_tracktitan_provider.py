@@ -191,6 +191,28 @@ class TestTracKTitanProvider:
 
         assert "__" not in filename
 
+    def test_build_filename_sanitizes_forward_slashes(self, tt_credentials):
+        """Test that forward slashes in track names are replaced with underscores."""
+        provider = TracKTitanProvider(**tt_credentials)
+        setup = SetupRecord(
+            id=999,
+            download_name="IR - V1 - Mercedes-AMG GT4 - Nürburgring Grand-Prix-Strecke - BES/WEC",
+            download_url="https://example.com/download",
+            creation_date="2026-02-02T00:00:00Z",
+            updated_date="2026-02-02T00:00:00Z",
+            ver="26S1 W2",
+            setup_ver="1.0",
+            changelog="",
+            cat="FTSC",
+            series="FTSC",
+        )
+
+        filename, _ = provider._build_filename(setup, "setup_CQ.sto")
+
+        assert "/" not in filename
+        assert "\\" not in filename
+        assert filename.endswith(".sto")
+
 
 class TestTracKTitanProviderParseResponse:
     """Tests for setup response parsing."""

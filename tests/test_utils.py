@@ -47,3 +47,24 @@ class TestSanitizeFilename:
 
         assert result == "_setup.sto_"
         assert changed is True
+
+    def test_sanitize_filename_forward_slash(self):
+        """Test that forward slashes are replaced with underscores."""
+        result, changed = sanitize_filename("BES/WEC_Setup.sto")
+
+        assert result == "BES_WEC_Setup.sto"
+        assert changed is True
+
+    def test_sanitize_filename_backslash(self):
+        """Test that backslashes are replaced with underscores."""
+        result, changed = sanitize_filename("BES\\WEC_Setup.sto")
+
+        assert result == "BES_WEC_Setup.sto"
+        assert changed is True
+
+    def test_sanitize_filename_mixed_unsafe_characters(self):
+        """Test filename with spaces and path separators."""
+        result, changed = sanitize_filename("Nürburgring - BES/WEC Setup.sto")
+
+        assert result == "Nürburgring_-_BES_WEC_Setup.sto"
+        assert changed is True
