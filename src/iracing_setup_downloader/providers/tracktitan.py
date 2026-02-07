@@ -65,7 +65,7 @@ class TracKTitanProvider(SetupProvider):
     SETUPS_ENDPOINT = "/api/v2/games/iRacing/setups"
     DOWNLOAD_URL_TEMPLATE = "/api/v2/games/iRacing/setups/{setup_id}/download"
     REQUEST_TIMEOUT = 30.0
-    DEFAULT_PAGE_LIMIT = 12
+    DEFAULT_PAGE_LIMIT = 100
     CONSUMER_ID = "trackTitan"
 
     def __init__(
