@@ -31,14 +31,18 @@ iracing-setup-downloader --help
 # Download command help
 iracing-setup-downloader download --help
 
-# GoFast-specific download help
+# Provider-specific download help
 iracing-setup-downloader download gofast --help
+iracing-setup-downloader download cda --help
+iracing-setup-downloader download tracktitan --help
 
 # List command help
 iracing-setup-downloader list --help
 
-# GoFast-specific list help
+# Provider-specific list help
 iracing-setup-downloader list gofast --help
+iracing-setup-downloader list cda --help
+iracing-setup-downloader list tracktitan --help
 ```
 
 ## Configuration
@@ -48,6 +52,15 @@ The CLI uses environment variables and `.env` files for configuration. Create a 
 ```env
 # GoFast bearer token (required for GoFast provider)
 GOFAST_TOKEN="Bearer your_token_here"
+
+# Coach Dave Academy (CDA) credentials (required for CDA provider)
+CDA_SESSION_ID=your_phpsessid_cookie
+CDA_CSRF_TOKEN=your_csrf_token
+
+# Track Titan credentials (required for Track Titan provider)
+TT_ACCESS_TOKEN=your_cognito_access_token
+TT_ID_TOKEN=your_cognito_id_token
+TT_USER_ID=your_user_uuid
 
 # Output directory for downloaded setups (optional)
 OUTPUT_PATH="~/Documents/iRacing/setups"
@@ -68,7 +81,7 @@ MAX_RETRIES=3
 
 ## Download Commands
 
-### Download All Setups from GoFast
+### GoFast
 
 Basic usage:
 
@@ -94,23 +107,7 @@ With custom concurrency:
 iracing-setup-downloader download gofast --max-concurrent 10
 ```
 
-### Dry Run
-
-Preview what would be downloaded without actually downloading:
-
-```bash
-iracing-setup-downloader download gofast --dry-run
-```
-
-### Verbose Logging
-
-Enable detailed logging for debugging:
-
-```bash
-iracing-setup-downloader download gofast --verbose
-```
-
-### Complete Example
+Complete example:
 
 ```bash
 iracing-setup-downloader download gofast \
@@ -120,27 +117,104 @@ iracing-setup-downloader download gofast \
   --verbose
 ```
 
+### Coach Dave Academy (CDA)
+
+Basic usage (reads credentials from `.env`):
+
+```bash
+iracing-setup-downloader download cda
+```
+
+With explicit credentials:
+
+```bash
+iracing-setup-downloader download cda \
+  --session-id "your_phpsessid" \
+  --csrf-token "your_csrf_token"
+```
+
+Complete example:
+
+```bash
+iracing-setup-downloader download cda \
+  --session-id "abc123" \
+  --csrf-token "xyz789" \
+  --output ~/Documents/iRacing/setups \
+  --max-concurrent 5 \
+  --verbose
+```
+
+### Track Titan
+
+Basic usage (reads credentials from `.env`):
+
+```bash
+iracing-setup-downloader download tracktitan
+```
+
+With explicit credentials:
+
+```bash
+iracing-setup-downloader download tracktitan \
+  --access-token "eyJ..." \
+  --id-token "eyJ..." \
+  --user-id "896a9f9d-ee3e-40eb-b9b6-2279c8db7302"
+```
+
+With download limit (useful for testing or incremental downloads):
+
+```bash
+iracing-setup-downloader download tracktitan --limit 5
+```
+
+Complete example:
+
+```bash
+iracing-setup-downloader download tracktitan \
+  --access-token "eyJ..." \
+  --id-token "eyJ..." \
+  --user-id "abc-123" \
+  --output ~/Documents/iRacing/setups \
+  --max-concurrent 5 \
+  --limit 10 \
+  --verbose
+```
+
+> **Note:** Track Titan uses two separate AWS Cognito tokens. The **access token** is used for API calls (listing setups), while the **ID token** is used for download requests. If the ID token is not provided, the access token is used for both.
+
+### Common Options
+
+These options are available for all `download` subcommands:
+
+- `--output, -o PATH`: Output directory (overrides `OUTPUT_PATH` env var)
+- `--max-concurrent INTEGER`: Max parallel downloads, 1-20 (default: 5)
+- `--dry-run`: Preview what would be downloaded without downloading
+- `--verbose`: Enable detailed logging
+
 ## List Commands
 
-### List Available Setups from GoFast
-
-Basic usage:
+### List Setups from GoFast
 
 ```bash
 iracing-setup-downloader list gofast
+iracing-setup-downloader list gofast --token "Bearer your_token" --verbose
 ```
 
-With explicit token:
+### List Setups from CDA
 
 ```bash
-iracing-setup-downloader list gofast --token "Bearer your_token_here"
+iracing-setup-downloader list cda
+iracing-setup-downloader list cda --session-id "abc123" --csrf-token "xyz789"
 ```
 
-With verbose logging:
+### List Setups from Track Titan
 
 ```bash
-iracing-setup-downloader list gofast --verbose
+iracing-setup-downloader list tracktitan
+iracing-setup-downloader list tracktitan --access-token "eyJ..." --user-id "abc-123"
 ```
+
+> **Note:** The `list tracktitan` command only uses the access token (v2 API); an ID token is not needed.
 
 ## Output Structure
 
@@ -151,15 +225,16 @@ Downloaded setups are organized in the following directory structure:
 ├── <Car Name>/
 │   └── <Track Name>/
 │       ├── GoFast_IMSA_26S1W8_Watkins_123.sto
-│       ├── GoFast_IMSA_26S1W9_Road_456.sto
+│       ├── CDA_IMSA_W8_watkins-glen.zip
+│       ├── TrackTitan_mx5_cup_bathurst_abc123.zip
 │       └── ...
 └── ...
 ```
 
 Where:
-- `<Car Name>`: Extracted from the setup's download name
-- `<Track Name>`: Extracted from the setup's download name
-- Filename format: `GoFast_<series>_<season>_<track>_<id>.sto`
+- `<Car Name>`: Extracted from the setup metadata
+- `<Track Name>`: Extracted from the setup metadata
+- Filename format varies by provider
 
 ## State Management
 
@@ -172,24 +247,22 @@ You can safely delete this file to force a complete re-download.
 
 ## Error Handling
 
-### Missing Token
+### Missing Credentials
+
+Each provider requires specific credentials. If they are missing, the CLI will show an error with instructions:
 
 ```bash
 $ iracing-setup-downloader download gofast
 Error: GoFast token is required. Provide via --token flag or GOFAST_TOKEN environment variable.
 ```
 
-Solution: Provide a token via `--token` flag or set `GOFAST_TOKEN` environment variable.
-
 ### Authentication Failed
 
 ```
 Authentication Error: Authentication failed: Invalid or expired token
-
-Hint: Check that your GoFast token is valid and has the correct permissions.
 ```
 
-Solution: Verify your token is correct and hasn't expired.
+Solution: Verify your credentials are correct and haven't expired.
 
 ### Network Errors
 
@@ -203,15 +276,20 @@ The CLI includes automatic retry logic with exponential backoff for network erro
 #!/bin/bash
 set -e
 
-# Export token
+# Export credentials
 export GOFAST_TOKEN="Bearer your_token_here"
+export CDA_SESSION_ID="your_session_id"
+export CDA_CSRF_TOKEN="your_csrf_token"
+export TT_ACCESS_TOKEN="your_access_token"
+export TT_ID_TOKEN="your_id_token"
+export TT_USER_ID="your_user_id"
 
-# Download setups
-iracing-setup-downloader download gofast \
-  --output ~/Documents/iRacing/setups \
-  --max-concurrent 10
+# Download from all providers
+iracing-setup-downloader download gofast --output ~/Documents/iRacing/setups
+iracing-setup-downloader download cda --output ~/Documents/iRacing/setups
+iracing-setup-downloader download tracktitan --output ~/Documents/iRacing/setups
 
-echo "Download completed successfully!"
+echo "All downloads completed!"
 ```
 
 ### Scheduled Downloads with Cron
@@ -220,40 +298,6 @@ Add to your crontab for daily downloads at 2 AM:
 
 ```cron
 0 2 * * * cd /path/to/project && /path/to/poetry run iracing-setup-downloader download gofast
-```
-
-### CI/CD Integration
-
-```yaml
-# Example GitHub Actions workflow
-name: Download Setups
-
-on:
-  schedule:
-    - cron: '0 2 * * *'  # Daily at 2 AM
-  workflow_dispatch:  # Manual trigger
-
-jobs:
-  download:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-      
-      - name: Install dependencies
-        run: |
-          pip install poetry
-          poetry install
-      
-      - name: Download setups
-        env:
-          GOFAST_TOKEN: ${{ secrets.GOFAST_TOKEN }}
-        run: |
-          poetry run iracing-setup-downloader download gofast
 ```
 
 ## Troubleshooting
@@ -282,8 +326,10 @@ rm ~/.iracing-setup-downloader/state.json
 
 ### Test Connection
 
-Use the list command to verify your token works:
+Use the list command to verify your credentials work:
 
 ```bash
-iracing-setup-downloader list gofast --token "Bearer your_token"
+iracing-setup-downloader list gofast
+iracing-setup-downloader list cda
+iracing-setup-downloader list tracktitan
 ```

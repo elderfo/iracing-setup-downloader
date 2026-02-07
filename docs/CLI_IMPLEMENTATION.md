@@ -2,256 +2,165 @@
 
 ## Overview
 
-The CLI has been successfully implemented for the iracing-setup-downloader project using Typer and Rich for a modern, user-friendly command-line interface.
+The CLI for iracing-setup-downloader is built with Typer and Rich, supporting three setup providers: GoFast, Coach Dave Academy (CDA), and Track Titan.
 
-## Implementation Details
-
-### File Structure
+## File Structure
 
 ```
 src/iracing_setup_downloader/
 ├── cli.py                 # Main CLI implementation
 ├── config.py              # Configuration management
+├── deduplication.py       # Setup deduplication logic
 ├── downloader.py          # Download orchestration
-├── models.py              # Data models
+├── models.py              # Data models (Setup, SetupRecord, CDASetupInfo, TracKTitanSetupInfo)
+├── organizer.py           # File organization
 ├── state.py               # State management
+├── track_matcher.py       # Track name matching
+├── utils.py               # Shared utilities
 └── providers/
     ├── __init__.py
-    ├── base.py           # Provider interface
-    └── gofast.py         # GoFast provider implementation
+    ├── base.py            # Provider interface
+    ├── gofast.py          # GoFast provider
+    ├── cda.py             # Coach Dave Academy provider
+    └── tracktitan.py      # Track Titan provider
 
 tests/
-└── test_cli.py           # CLI tests
+├── conftest.py            # Shared fixtures
+├── test_cda_provider.py   # CDA provider tests
+├── test_cli.py            # CLI tests
+├── test_config.py         # Configuration tests
+├── test_deduplication.py  # Deduplication tests
+├── test_downloader.py     # Downloader tests
+├── test_gofast_provider.py # GoFast provider tests
+├── test_models.py         # Data model tests
+├── test_organizer.py      # Organizer tests
+├── test_state.py          # State management tests
+├── test_track_matcher.py  # Track matcher tests
+├── test_tracktitan_provider.py # Track Titan provider tests
+└── test_utils.py          # Utility tests
 
 docs/
-├── CLI_USAGE.md          # User documentation
-└── CLI_IMPLEMENTATION.md # This file
-
-examples/
-├── cli_usage.sh          # Shell script examples
-└── cli_example.py        # Python examples
+├── CLI_USAGE.md           # User documentation
+├── CLI_QUICK_REFERENCE.md # Quick reference card
+├── CLI_IMPLEMENTATION.md  # This file
+└── downloader.md          # Downloader module docs
 ```
 
-### Key Components
+## Commands
 
-#### 1. Main App (`cli.py`)
-
-- **Typer-based CLI** with hierarchical commands
-- **Rich console output** for beautiful formatting
-- **Async support** using `asyncio.run()` for async operations
-- **Error handling** with user-friendly messages
-- **Logging support** with `--verbose` flag
-
-#### 2. Commands
-
-##### Main Command
+### Main Command
 ```bash
 iracing-setup-downloader [OPTIONS] COMMAND
 ```
-Options:
-- `--version, -v`: Show version and exit
-- `--help`: Show help message
+Options: `--version, -v` | `--help`
 
-##### Download Command
+### Download Commands
 ```bash
 iracing-setup-downloader download gofast [OPTIONS]
+iracing-setup-downloader download cda [OPTIONS]
+iracing-setup-downloader download tracktitan [OPTIONS]
 ```
-Options:
-- `--token, -t TEXT`: GoFast bearer token (overrides env var)
-- `--output, -o PATH`: Output directory path (overrides env var)
-- `--max-concurrent, -c INTEGER`: Max parallel downloads (1-20, default: 5)
-- `--dry-run`: Show what would be downloaded without downloading
+
+#### GoFast Options
+- `--token, -t TEXT`: GoFast bearer token [env: `GOFAST_TOKEN`]
+- `--output, -o PATH`: Output directory [env: `OUTPUT_PATH`]
+- `--max-concurrent, -c INTEGER`: Max parallel downloads (1-20)
+- `--dry-run`: Preview without downloading
 - `--verbose`: Enable verbose logging
 
-##### List Command
+#### CDA Options
+- `--session-id, -s TEXT`: PHPSESSID cookie [env: `CDA_SESSION_ID`]
+- `--csrf-token, -c TEXT`: x-elle-csrf-token header [env: `CDA_CSRF_TOKEN`]
+- `--output, -o PATH`: Output directory [env: `OUTPUT_PATH`]
+- `--max-concurrent INTEGER`: Max parallel downloads (1-20)
+- `--dry-run`: Preview without downloading
+- `--verbose`: Enable verbose logging
+
+#### Track Titan Options
+- `--access-token, -t TEXT`: AWS Cognito access token [env: `TT_ACCESS_TOKEN`]
+- `--id-token TEXT`: AWS Cognito ID token for downloads [env: `TT_ID_TOKEN`]
+- `--user-id, -u TEXT`: User UUID [env: `TT_USER_ID`]
+- `--output, -o PATH`: Output directory [env: `OUTPUT_PATH`]
+- `--max-concurrent INTEGER`: Max parallel downloads (1-20)
+- `--limit, -l INTEGER`: Max number of new setups to download
+- `--dry-run`: Preview without downloading
+- `--verbose`: Enable verbose logging
+
+### List Commands
 ```bash
 iracing-setup-downloader list gofast [OPTIONS]
+iracing-setup-downloader list cda [OPTIONS]
+iracing-setup-downloader list tracktitan [OPTIONS]
 ```
-Options:
-- `--token, -t TEXT`: GoFast bearer token (overrides env var)
-- `--verbose`: Enable verbose logging
+Each list command accepts the same authentication options as its download counterpart (excluding download-specific options like `--output`, `--max-concurrent`, `--limit`, and `--dry-run`).
 
-### Features
+## Key Components
 
-#### Configuration Management
-- **Environment variables** support via `.env` file
-- **CLI argument overrides** for all settings
-- **Sensible defaults** for all optional parameters
-- **Automatic token validation** with Bearer prefix handling
+### Configuration (`config.py`)
+- Environment variable support via `.env` files using Pydantic settings
+- CLI argument overrides for all settings
+- Alias support (e.g., `GOFAST_TOKEN` or `TOKEN`)
+- Configuration priority: CLI args > env vars > `.env` file > defaults
 
-#### Download Features
-- **Concurrent downloads** with configurable limits
-- **State tracking** to avoid re-downloading unchanged setups
-- **Retry logic** with exponential backoff
-- **Progress bars** using Rich progress components
-- **Dry run mode** to preview downloads
-- **Error reporting** with detailed messages
+### Providers (`providers/`)
+Each provider implements the `SetupProvider` base class:
+- **GoFast**: Token-based auth, downloads `.sto` setup files
+- **CDA**: Session ID + CSRF token auth, downloads `.zip` bundles
+- **Track Titan**: Dual AWS Cognito token auth (access token for API, ID token for downloads), downloads `.zip` files via pre-signed CloudFront URLs
 
-#### Display Features
-- **Rich tables** for configuration and results
-- **Colored output** for better readability
-- **Progress tracking** during downloads
-- **Error summaries** with helpful hints
+### Download Features
+- Concurrent downloads with configurable limits
+- State tracking to skip already-downloaded setups
+- Retry logic with exponential backoff
+- Progress bars using Rich
+- Dry run mode
+- Deduplication across providers
 
-### Error Handling
+### State Management (`state.py`)
+- JSON file at `~/.iracing-setup-downloader/state.json`
+- Tracks downloaded setups by provider and unique ID
+- Detects updates via timestamps
+- Safe to delete for a fresh re-download
 
-The CLI provides comprehensive error handling for:
+## Testing
 
-1. **Missing Token**
-   - Clear error message
-   - Helpful hint about configuration options
+- **409 total tests** across all modules
+- **Pytest** with async support (`pytest-asyncio`)
+- **Mock-based testing** for external API dependencies
+- **Pre-commit hooks**: ruff linting, ruff formatting, pytest
 
-2. **Authentication Errors**
-   - Specific error messages for 401/403 responses
-   - Suggestions for troubleshooting
+## Design Decisions
 
-3. **Network Errors**
-   - Automatic retry with backoff
-   - Detailed error reporting
+### Typer Framework
+Modern, type-safe CLI framework with automatic help generation and built-in support for environment variable defaults.
 
-4. **Keyboard Interrupts**
-   - Graceful shutdown
-   - Resource cleanup
+### Rich for Output
+Beautiful terminal output with tables, progress bars, panels, and colored text.
 
-5. **General Exceptions**
-   - Caught and displayed with context
-   - Optional stack traces with `--verbose`
+### Async/Await Pattern
+Non-blocking I/O for efficient concurrent downloads using aiohttp.
 
-### Testing
+### Dual-Token Auth (Track Titan)
+Track Titan uses separate AWS Cognito tokens: an access token for v2 API calls and an ID token for v1 download calls. The ID token is optional and falls back to the access token for backward compatibility.
 
-#### Test Coverage
-- **152 total tests** across all modules
-- **88% overall coverage**
-- **63% CLI coverage** (focused on main flows)
-- **100% coverage** for models, config, and state
-
-#### Test Categories
-1. **Unit tests** for individual functions
-2. **Integration tests** for command workflows
-3. **Mock-based tests** for external dependencies
-4. **Error handling tests** for edge cases
-
-### Documentation
-
-#### User Documentation
-- **CLI_USAGE.md**: Comprehensive usage guide with examples
-- **Inline help**: Built-in help for all commands
-- **Example scripts**: Both shell and Python examples
-
-#### Developer Documentation
-- **Type hints**: Complete type annotations
-- **Docstrings**: Google-style docstrings for all functions
-- **Comments**: Inline comments for complex logic
-
-### Design Decisions
-
-#### 1. Typer Framework
-**Rationale**: Modern, type-safe, automatic help generation
-- Excellent type support
-- Automatic documentation
-- Easy to extend with new commands
-
-#### 2. Rich for Output
-**Rationale**: Beautiful terminal output with minimal code
-- Tables and panels for structured data
-- Progress bars for long operations
-- Colored output for better UX
-
-#### 3. Async/Await Pattern
-**Rationale**: Efficient concurrent downloads
-- Non-blocking I/O operations
-- Better resource utilization
-- Scalable for large download sets
-
-#### 4. State Management
-**Rationale**: Avoid unnecessary re-downloads
-- JSON file for persistence
-- Tracks downloaded setups
-- Detects updates via timestamp
-
-#### 5. Configuration Priority
-**Rationale**: Flexible configuration with clear precedence
-1. CLI arguments (highest priority)
+### Configuration Priority
+1. CLI arguments (highest)
 2. Environment variables
-3. .env file
-4. Default values (lowest priority)
+3. `.env` file
+4. Default values (lowest)
 
-### Code Quality
+## Adding New Providers
 
-#### Linting
-- **Ruff** for fast, comprehensive linting
-- **100% linting compliance**
-- **PEP 8 compliant** code style
+1. Create a provider class in `providers/` extending `SetupProvider`
+2. Add a model in `models.py` if needed
+3. Add download and list commands in `cli.py`
+4. Add config fields in `config.py`
+5. Add tests
+6. Update documentation
 
-#### Type Safety
-- **Type hints** for all function signatures
-- **Pydantic models** for data validation
-- **MyPy compatibility**
-
-#### Testing
-- **Pytest** with async support
-- **Mock-based testing** for external dependencies
-- **Coverage reporting** with pytest-cov
-
-### Performance
-
-#### Optimization Strategies
-1. **Concurrent downloads** (default: 5, max: 20)
-2. **Random delays** to avoid rate limiting
-3. **Connection pooling** via aiohttp sessions
-4. **Retry logic** for transient failures
-5. **State caching** to skip downloaded setups
-
-#### Benchmarks
-- **API fetch**: < 2 seconds for 100+ setups
-- **Download speed**: Limited by concurrency setting
-- **State load/save**: < 100ms for 1000+ entries
-
-### Security
-
-#### Best Practices
-1. **Token handling**: Never logged or displayed
-2. **Environment variables**: Secure token storage
-3. **File permissions**: State file readable only by user
-4. **Input validation**: All inputs validated via Pydantic
-
-### Future Enhancements
-
-#### Potential Improvements
-1. **Additional providers**: Craig's Setup Shop, etc.
-2. **Filtering options**: By car, track, or series
-3. **Update command**: Check for and download only updates
-4. **Export command**: Export state or setup list
-5. **Import command**: Import from backup
-6. **Web UI**: Optional web interface for management
-
-#### Known Limitations
-1. **Single provider at a time**: Can't mix providers in one command
-2. **No parallel provider support**: Sequential downloads only
-3. **Limited filtering**: Downloads all available setups
-
-### Maintenance
-
-#### Adding New Providers
-1. Implement provider class extending `SetupProvider`
-2. Add command to `download_app` and `list_app`
-3. Add tests for new provider
-4. Update documentation
-
-#### Updating Dependencies
-```bash
-poetry update
-poetry run pytest
-poetry run ruff check src/ tests/
-```
-
-### References
+## References
 
 - [Typer Documentation](https://typer.tiangolo.com/)
 - [Rich Documentation](https://rich.readthedocs.io/)
 - [Pydantic Documentation](https://docs.pydantic.dev/)
 - [aiohttp Documentation](https://docs.aiohttp.org/)
-
-## Conclusion
-
-The CLI implementation provides a robust, user-friendly interface for downloading iRacing setups. It follows Python best practices, includes comprehensive testing, and is well-documented for both users and developers.
